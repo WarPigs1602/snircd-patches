@@ -1,0 +1,1498 @@
+From 05a883860acfc2e7b471693146e512ba8780b74c Mon Sep 17 00:00:00 2001
+From: Andreas Pschorn <source@midiandmore.de>
+Date: Sat, 3 Aug 2024 15:34:21 +0200
+Subject: [PATCH 1/2]  Auf Branch master  Ihr Branch ist auf demselben Stand
+ wie 'origin/master'.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+ Zum Commit vorgemerkte Änderungen:
+	geändert:       include/client.h
+	geändert:       include/handlers.h
+	geändert:       include/ircd_features.h
+	geändert:       include/listener.h
+	geändert:       include/msg.h
+	geändert:       include/numeric.h
+	geändert:       include/s_auth.h
+	geändert:       include/s_conf.h
+	geändert:       include/s_misc.h
+	geändert:       ircd/Makefile.in
+	geändert:       ircd/ircd_features.c
+	geändert:       ircd/ircd_lexer.l
+	geändert:       ircd/ircd_parser.y
+	geändert:       ircd/ircd_string.c
+	geändert:       ircd/listener.c
+	geändert:       ircd/m_nick.c
+	geändert:       ircd/m_trace.c
+	geändert:       ircd/m_user.c
+	geändert:       ircd/m_whois.c
+	geändert:       ircd/parse.c
+	geändert:       ircd/s_auth.c
+	geändert:       ircd/s_bsd.c
+	geändert:       ircd/s_conf.c
+	geändert:       ircd/s_debug.c
+	geändert:       ircd/s_err.c
+	geändert:       ircd/s_stats.c
+
+ Unversionierte Dateien:
+	ircd/m_webirc.c
+---
+ include/client.h        |  11 +++-
+ include/handlers.h      |   1 +
+ include/ircd_features.h |   2 +
+ include/listener.h      |   3 +
+ include/msg.h           |   5 ++
+ include/numeric.h       |   2 +
+ include/s_auth.h        |   3 +
+ include/s_conf.h        |  15 +++++
+ include/s_misc.h        |   1 +
+ ircd/Makefile.in        |   1 +
+ ircd/ircd_features.c    |   2 +
+ ircd/ircd_lexer.l       |   3 +
+ ircd/ircd_parser.y      |  67 ++++++++++++++++++++-
+ ircd/ircd_string.c      |  16 +++--
+ ircd/listener.c         |   4 +-
+ ircd/m_nick.c           |   3 +-
+ ircd/m_trace.c          |   5 ++
+ ircd/m_user.c           |   2 +
+ ircd/m_whois.c          |  15 +++--
+ ircd/parse.c            |  48 ++++++---------
+ ircd/s_auth.c           | 126 +++++++++++++++++++++++++++++++++-------
+ ircd/s_bsd.c            |  52 +++++++++--------
+ ircd/s_conf.c           |  57 +++++++++++++++++-
+ ircd/s_debug.c          |  40 +++++++------
+ ircd/s_err.c            |   4 +-
+ ircd/s_stats.c          |  26 +++++++++
+ 26 files changed, 406 insertions(+), 108 deletions(-)
+
+diff --git a/include/client.h b/include/client.h
+index 4da341e..9f14983 100644
+--- a/include/client.h
++++ b/include/client.h
+@@ -249,6 +249,7 @@ struct Connection
+   struct CapSet       con_capab;     /**< Client capabilities (from us) */
+   struct CapSet       con_active;    /**< Active capabilities (to us) */
+   struct AuthRequest* con_auth;      /**< Auth request for client */
++  const struct wline* con_wline;     /**< WebIRC authorization for client */  
+ };
+ 
+ /** Magic constant to identify valid Connection structures. */
+@@ -392,6 +393,8 @@ struct Client {
+ #define cli_proc(cli)		con_proc(cli_connect(cli))
+ /** Get auth request for client. */
+ #define cli_auth(cli)		con_auth(cli_connect(cli))
++/** Get WebIRC authorization for client. */
++#define cli_wline(cli)          con_wline(cli_connect(cli))
+ /** Get sentalong marker for client. */
+ #define cli_sentalong(cli)      con_sentalong(cli_connect(cli))
+ 
+@@ -473,6 +476,8 @@ struct Client {
+ #define con_active(con)         (&(con)->con_active)
+ /** Get the auth request for the connection. */
+ #define con_auth(con)		((con)->con_auth)
++/** Get the WebIRC block (if any) used by the connection. */
++#define con_wline(con)          ((con)->con_wline)
+ 
+ #define STAT_CONNECTING         0x001 /**< connecting to another server */
+ #define STAT_HANDSHAKE          0x002 /**< pass - server sent */
+@@ -482,6 +487,7 @@ struct Client {
+ #define STAT_UNKNOWN_SERVER     0x020 /**< connection on a server port */
+ #define STAT_SERVER             0x040 /**< fully registered server */
+ #define STAT_USER               0x080 /**< fully registered user */
++#define STAT_WEBIRC             0x100 /**< connection on a webirc port */
+ 
+ /*
+  * status macros.
+@@ -498,13 +504,16 @@ struct Client {
+ #define IsMe(x)                 (cli_status(x) == STAT_ME)
+ /** Return non-zero if the client has not yet registered. */
+ #define IsUnknown(x)            (cli_status(x) & \
+-        (STAT_UNKNOWN | STAT_UNKNOWN_USER | STAT_UNKNOWN_SERVER))
++        (STAT_UNKNOWN | STAT_UNKNOWN_USER | STAT_UNKNOWN_SERVER | STAT_WEBIRC))
+ /** Return non-zero if the client is an unregistered connection on a
+  * server port. */
+ #define IsServerPort(x)         (cli_status(x) == STAT_UNKNOWN_SERVER )
+ /** Return non-zero if the client is an unregistered connection on a
+  * user port. */
+ #define IsUserPort(x)           (cli_status(x) == STAT_UNKNOWN_USER )
++/** Return non-zero if the client is an unregistered connection on a
++ * WebIRC port that has not yet sent WEBIRC. */
++#define IsWebircPort(x)         (cli_status(x) == STAT_WEBIRC)
+ /** Return non-zero if the client is a real client connection. */
+ #define IsClient(x)             (cli_status(x) & \
+         (STAT_HANDSHAKE | STAT_ME | STAT_UNKNOWN |\
+diff --git a/include/handlers.h b/include/handlers.h
+index a468201..c9c8448 100644
+--- a/include/handlers.h
++++ b/include/handlers.h
+@@ -146,6 +146,7 @@ extern int m_trace(struct Client*, struct Client*, int, char*[]);
+ extern int m_unregistered(struct Client*, struct Client*, int, char*[]);
+ extern int m_unsupported(struct Client*, struct Client*, int, char*[]);
+ extern int m_user(struct Client*, struct Client*, int, char*[]);
++extern int m_webirc(struct Client*, struct Client*, int, char*[]);
+ extern int m_userhost(struct Client*, struct Client*, int, char*[]);
+ extern int m_userip(struct Client*, struct Client*, int, char*[]);
+ extern int m_version(struct Client*, struct Client*, int, char*[]);
+diff --git a/include/ircd_features.h b/include/ircd_features.h
+index 9118f7c..97c9762 100644
+--- a/include/ircd_features.h
++++ b/include/ircd_features.h
+@@ -142,10 +142,12 @@ enum Feature {
+   FEAT_HIS_STATS_U,
+   FEAT_HIS_STATS_v,
+   FEAT_HIS_STATS_w,
++  FEAT_HIS_STATS_W,
+   FEAT_HIS_STATS_x,
+   FEAT_HIS_STATS_y,
+   FEAT_HIS_STATS_z,
+   FEAT_HIS_STATS_IAUTH,
++  FEAT_HIS_WEBIRC,
+   FEAT_HIS_WHOIS_SERVERNAME,
+   FEAT_HIS_WHOIS_IDLETIME,
+   FEAT_HIS_WHOIS_LOCALCHAN,
+diff --git a/include/listener.h b/include/listener.h
+index 96ce739..0957d8f 100644
+--- a/include/listener.h
++++ b/include/listener.h
+@@ -52,6 +52,8 @@ enum ListenerFlag {
+   LISTEN_IPV4,
+   /** Port listens for IPv6 connections. */
+   LISTEN_IPV6,
++  /** Port accepts only webirc connections. */
++  LISTEN_WEBIRC,
+   /** Sentinel for counting listener flags. */
+   LISTEN_LAST_FLAG
+ };
+@@ -76,6 +78,7 @@ struct Listener {
+ 
+ #define listener_server(LISTENER) FlagHas(&(LISTENER)->flags, LISTEN_SERVER)
+ #define listener_active(LISTENER) FlagHas(&(LISTENER)->flags, LISTEN_ACTIVE)
++#define listener_webirc(LISTENER) FlagHas(&(LISTENER)->flags, LISTEN_WEBIRC)
+ 
+ extern void        add_listener(int port, const char* vaddr_ip, 
+                                 const char* mask,
+diff --git a/include/msg.h b/include/msg.h
+index f0ebe3c..c4fe19c 100644
+--- a/include/msg.h
++++ b/include/msg.h
+@@ -68,6 +68,11 @@ struct Client;
+ #define TOK_USER                "USER"
+ #define CMD_USER		MSG_USER, TOK_USER
+ 
++#define MSG_WEBIRC              "WEBIRC"        /* WEBI */
++#define TOK_WEBIRC              "WEBIRC"
++#define CMD_WEBIRC              MSG_WEBIRC, TOK_WEBIRC
++
++
+ #define MSG_NICK                "NICK"          /* NICK */
+ #define TOK_NICK                "N"
+ #define CMD_NICK		MSG_NICK, TOK_NICK
+diff --git a/include/numeric.h b/include/numeric.h
+index 338920c..6829c4e 100644
+--- a/include/numeric.h
++++ b/include/numeric.h
+@@ -98,6 +98,7 @@ extern const struct Numeric* get_error_numeric(int err);
+ /*      RPL_STATSQLINE       217           Various */
+ #define RPL_STATSYLINE       218
+ #define RPL_ENDOFSTATS       219        /* See also RPL_STATSDLINE */
++#define RPL_STATSWLINE       220        /* Undernet extension */
+ /*      RPL_STATSPLINE       220           Hybrid - Because 217 was for
+                                            old Q: lines. */
+ /*      RPL_STATSBLINE       220	   Numerics List: Dalnet,unreal */
+@@ -233,6 +234,7 @@ extern const struct Numeric* get_error_numeric(int err);
+ #define RPL_ENDOFWHOIS       318        /* See RPL_WHOISUSER/RPL_WHOISSERVER/
+                                            RPL_WHOISOPERATOR/RPL_WHOISIDLE */
+ #define RPL_WHOISCHANNELS    319
++#define RPL_WHOISWEBIRC      320
+ /*      RPL_WHOIS_HIDDEN     320         Anothernet +h, ick! */
+ /*	RPL_WHOISSPECIAL     320	unreal */
+ #define RPL_LISTSTART        321
+diff --git a/include/s_auth.h b/include/s_auth.h
+index ce25827..c13a30e 100644
+--- a/include/s_auth.h
++++ b/include/s_auth.h
+@@ -41,12 +41,15 @@ extern int auth_set_nick(struct AuthRequest *auth, const char *nickname);
+ extern int auth_set_password(struct AuthRequest *auth, const char *password);
+ extern int auth_cap_start(struct AuthRequest *auth);
+ extern int auth_cap_done(struct AuthRequest *auth);
++extern int auth_spoof_user(struct AuthRequest *auth, const char *username, const char *hostname, const char *ip);
+ extern void destroy_auth_request(struct AuthRequest *req);
+ 
+ extern int auth_spawn(int argc, char *argv[]);
+ extern void auth_send_exit(struct Client *cptr);
++extern void auth_send_xreply(struct Client *sptr, const char *routing, const char *reply);
+ extern void auth_mark_closing(void);
+ extern void auth_close_unused(void);
++extern void auth_cancel_iauth_stats(struct Client *cptr);
+ extern void report_iauth_conf(struct Client *cptr, const struct StatDesc *sd, char *param);
+ extern void report_iauth_stats(struct Client *cptr, const struct StatDesc *sd, char *param);
+ 
+diff --git a/include/s_conf.h b/include/s_conf.h
+index 5f119ce..9b5e85f 100644
+--- a/include/s_conf.h
++++ b/include/s_conf.h
+@@ -94,6 +94,18 @@ struct sline {
+ #define SLINE_FLAGS_HOSTNAME 0x0001 /* S-line by hostname */
+ #define SLINE_FLAGS_IP       0x0002 /* S-line by IP address/CIDR */
+ 
++/** Webirc authorization structure. */
++struct wline
++{
++  struct wline *next;    /**< Next wline in #GlobalWebircList. */
++  struct irc_in_addr ip; /**< IP of webirc service. */
++  unsigned char bits;    /**< Number of bits used in #ip. */
++  unsigned char stale;   /**< Non-zero during config re-read. */
++  unsigned char hidden;  /**< If non-zero, hide IP in /stats webirc. */
++  char *passwd;          /**< Password field. */
++  char *description;     /**< Text description, e.g. for provider. */
++};
++
+ /** Local K-line structure. */
+ struct DenyConf {
+   struct DenyConf*    next;     /**< Next DenyConf in #denyConfList. */
+@@ -172,6 +184,8 @@ extern int              GlobalConfCount;
+ extern struct s_map*    GlobalServiceMapList;
+ extern struct qline*    GlobalQuarantineList;
+ extern struct sline*	GlobalSList;
++extern struct wline*    GlobalWebircList;
++extern int              DoIdentLookups;
+ 
+ /*
+  * Proto types
+@@ -198,6 +212,7 @@ extern int  conf_check_server(struct Client *cptr);
+ extern int rehash(struct Client *cptr, int sig);
+ extern int find_kill(struct Client *cptr, int glinecheck);
+ extern const char *find_quarantine(const char* chname);
++extern const struct wline *find_webirc(const struct irc_in_addr *addr, const char *passwd);
+ extern void lookup_confhost(struct ConfItem *aconf);
+ extern void conf_parse_userhost(struct ConfItem *aconf, char *host);
+ extern struct ConfItem *conf_debug_iline(const char *client);
+diff --git a/include/s_misc.h b/include/s_misc.h
+index ede6737..ea93244 100644
+--- a/include/s_misc.h
++++ b/include/s_misc.h
+@@ -63,6 +63,7 @@ struct ServerStatistics {
+   unsigned int is_empt;         /**< empty message */
+   unsigned int is_num;          /**< numeric message */
+   unsigned int is_kill;         /**< number of kills generated on collisions */
++  unsigned int is_throttled;    /**< client rejected: IP connecting too fast */
+   unsigned int is_fake;         /**< MODE 'fakes' */
+   unsigned int is_asuc;         /**< successful auth requests */
+   unsigned int is_abad;         /**< bad auth requests */
+diff --git a/ircd/Makefile.in b/ircd/Makefile.in
+index 01a5ea6..430b4be 100644
+--- a/ircd/Makefile.in
++++ b/ircd/Makefile.in
+@@ -185,6 +185,7 @@ IRCD_SRC = \
+ 	m_wallops.c \
+ 	m_wallusers.c \
+ 	m_wallvoices.c \
++	m_webirc.c \
+ 	m_who.c \
+ 	m_whois.c \
+ 	m_whowas.c \
+diff --git a/ircd/ircd_features.c b/ircd/ircd_features.c
+index ffb14a5..3622e1f 100644
+--- a/ircd/ircd_features.c
++++ b/ircd/ircd_features.c
+@@ -395,10 +395,12 @@ static struct FeatureDesc {
+   F_B(HIS_STATS_U, 0, 1, 0),
+   F_B(HIS_STATS_v, 0, 1, 0),
+   F_B(HIS_STATS_w, 0, 1, 0),
++  F_B(HIS_STATS_W, 0, 1, 0),
+   F_B(HIS_STATS_x, 0, 1, 0),
+   F_B(HIS_STATS_y, 0, 1, 0),
+   F_B(HIS_STATS_z, 0, 1, 0),
+   F_B(HIS_STATS_IAUTH, 0, 1, 0),
++  F_B(HIS_WEBIRC, 0, 1, 0),
+   F_B(HIS_WHOIS_SERVERNAME, 0, 1, 0),
+   F_B(HIS_WHOIS_IDLETIME, 0, 1, 0),
+   F_B(HIS_WHOIS_LOCALCHAN, 0, 1, 0),
+diff --git a/ircd/ircd_lexer.l b/ircd/ircd_lexer.l
+index 4ed667f..1cfeccb 100644
+--- a/ircd/ircd_lexer.l
++++ b/ircd/ircd_lexer.l
+@@ -29,6 +29,7 @@
+ #include "ircd.h"
+ #include "ircd_alloc.h"
+ #include "ircd_string.h"
++#include "s_conf.h"
+ #include "s_debug.h"
+ #include "y.tab.h"
+ 
+@@ -96,6 +97,7 @@ static struct lexer_token {
+   TOKEN(IAUTH),
+   TOKEN(TIMEOUT),
+   TOKEN(FEATURES),
++  TOKEN(WEBIRC),
+   TOKEN(CHANNEL),
+   TOKEN(PSEUDO),
+   TOKEN(PREPEND),
+@@ -150,6 +152,7 @@ static struct lexer_token {
+   { "terabytes", TBYTES },
+   { "unlimit_query", TPRIV_UNLIMIT_QUERY },
+   { "walk_lchan", TPRIV_WALK_LCHAN },
++  { "webirc", WEBIRC },
+   { "wide_gline", TPRIV_WIDE_GLINE },
+   { "whox", TPRIV_WHOX },
+   { "chanserv", TPRIV_CHANSERV },
+diff --git a/ircd/ircd_parser.y b/ircd/ircd_parser.y
+index 4dcdb38..11fb3a4 100644
+--- a/ircd/ircd_parser.y
++++ b/ircd/ircd_parser.y
+@@ -70,6 +70,7 @@
+   extern struct s_map*      GlobalServiceMapList;
+   extern struct qline*      GlobalQuarantineList;
+   extern struct sline*      GlobalSList;
++  extern struct wline*      GlobalWebircList;
+ 
+   int yylex(void);
+   /* Now all the globals we need :/... */
+@@ -178,6 +179,7 @@ static void free_slist(struct SLink **link) {
+ %token SPOOFHOST
+ %token TOK_IPV4 TOK_IPV6
+ %token DNS
++%token WEBIRC
+ /* and now a lot of privileges... */
+ %token TPRIV_CHAN_LIMIT TPRIV_MODE_LCHAN TPRIV_DEOP_LCHAN TPRIV_WALK_LCHAN
+ %token TPRIV_LOCAL_KILL TPRIV_REHASH TPRIV_RESTART TPRIV_DIE
+@@ -207,7 +209,7 @@ blocks: blocks block | block;
+ block: adminblock | generalblock | classblock | connectblock |
+        uworldblock | operblock | portblock | jupeblock | clientblock |
+        killblock | cruleblock | motdblock | featuresblock | quarantineblock |
+-       pseudoblock | iauthblock | spoofblock | error ';';
++       pseudoblock | iauthblock | webircblock | spoofblock | error ';';
+ 
+ /* The timespec, sizespec and expr was ripped straight from
+  * ircd-hybrid-7. */
+@@ -745,11 +747,14 @@ portblock: PORT '{' portitems '}' ';' {
+   port = 0;
+ };
+ portitems: portitem portitems | portitem;
+-portitem: portnumber | portvhost | portvhostnumber | portmask | portserver | porthidden;
++portitem: portnumber | portvhost | portvhostnumber | portmask | portserver | portwebirc | porthidden;
+ portnumber: PORT '=' address_family NUMBER ';'
+ {
+   if ($4 < 1 || $4 > 65535) {
+     parse_error("Port %d is out of range", port);
++  } else if (FlagHas(&listen_flags, LISTEN_WEBIRC)
++             && FlagHas(&listen_flags, LISTEN_SERVER)) {
++    parse_error("Port %d cannot be both WEBIRC and SERVER", port);
+   } else {
+     port = $3 | $4;
+     if (hosts && (0 == (hosts->flags & 65535)))
+@@ -803,6 +808,14 @@ porthidden: HIDDEN '=' YES ';'
+   FlagClr(&listen_flags, LISTEN_HIDDEN);
+ };
+ 
++portwebirc: WEBIRC '=' YES ';'
++{
++  FlagSet(&listen_flags, LISTEN_WEBIRC);
++} | WEBIRC '=' NO ';'
++{
++  FlagClr(&listen_flags, LISTEN_WEBIRC);
++};
++
+ clientblock: CLIENT
+ {
+   maxlinks = 65535;
+@@ -1172,6 +1185,56 @@ iauthprogram: PROGRAM '='
+   }
+ } stringlist ';';
+ 
++webircblock: WEBIRC '{' webircitems '}' ';'
++{
++  struct wline *wline;
++  struct irc_in_addr peer;
++  unsigned char bits;
++
++  if (!ip)
++    parse_error("Missing IP address in WebIRC block");
++  else if (!pass)
++    parse_error("Missing password in WebIRC block");
++  else if (!ipmask_parse(ip, &peer, &bits))
++    parse_error("Invalid IP address in WebIRC block");
++  else {
++    /* Search for a wline with the same IP (mask) and password. */
++    for (wline = GlobalWebircList; wline; wline = wline->next) {
++      if ((bits == wline->bits)
++          && ipmask_check(&peer, &wline->ip, bits)
++          && (0 == strcmp(pass, wline->passwd)))
++        break;
++    }
++
++    /* Update it, or create a new structure. */
++    if (wline) {
++      MyFree(wline->description);
++    } else {
++      wline = (struct wline *) MyMalloc(sizeof(*wline));
++      memcpy(&wline->ip, &peer, sizeof(wline->ip));
++      wline->bits = bits;
++      wline->passwd = pass;
++      wline->next = GlobalWebircList;
++      GlobalWebircList = wline;
++    }
++    wline->stale = 0;
++    wline->hidden = (flags & 1) != 0;
++    wline->description = name;
++
++    MyFree(ip);
++    ip = NULL;
++    pass = NULL;
++    name = NULL;
++  }
++};
++
++webircitems: webircitem | webircitems webircitem;
++webircitem: webircip | webircpass | webircdesc | webirchidden;
++webircip: IP '=' QSTRING ';' { MyFree(ip); ip = $3; };
++webircpass: PASS '=' QSTRING ';' { MyFree(pass); pass = $3; };
++webircdesc: DESCRIPTION '=' QSTRING ';' { MyFree(name); name = $3; };
++webirchidden: HIDDEN '=' YES ';' { flags = flags | 1; }
++
+ spoofblock: SPOOFHOST QSTRING '{'
+ {
+   spoof = MyCalloc(1, sizeof(struct sline));
+diff --git a/ircd/ircd_string.c b/ircd/ircd_string.c
+index a3e3890..69d588a 100644
+--- a/ircd/ircd_string.c
++++ b/ircd/ircd_string.c
+@@ -481,9 +481,11 @@ ircd_aton_ip4(const char *input, unsigned int *output, unsigned char *pbits)
+       *pbits = bits;
+     return pos;
+   case '.':
++    if (++dots > 3)
++      return 0;
+     if (input[++pos] == '.')
+       return 0;
+-    ip |= part << (24 - 8 * dots++);
++    ip |= part << (32 - 8 * dots);
+     part = 0;
+     if (input[pos] == '*') {
+       while (input[++pos] == '*' || input[pos] == '.') ;
+@@ -524,16 +526,16 @@ ircd_aton_ip4(const char *input, unsigned int *output, unsigned char *pbits)
+ int
+ ipmask_parse(const char *input, struct irc_in_addr *ip, unsigned char *pbits)
+ {
+-  char *colon;
++  char *colon_char;
+   char *dot;
+ 
+   assert(ip);
+   assert(input);
+   memset(ip, 0, sizeof(*ip));
+-  colon = strchr(input, ':');
++  colon_char = strchr(input, ':');
+   dot = strchr(input, '.');
+ 
+-  if (colon && (!dot || (dot > colon))) {
++  if (colon_char && (!dot || (dot > colon_char))) {
+     unsigned int part = 0, pos = 0, ii = 0, colon = 8;
+     const char *part_start = NULL;
+ 
+@@ -576,6 +578,8 @@ ipmask_parse(const char *input, struct irc_in_addr *ip, unsigned char *pbits)
+       if (input[pos] == ':') {
+         if (colon < 8)
+           return 0;
++        if (ii == 8)
++            return 0;
+         colon = ii;
+         pos++;
+       }
+@@ -607,6 +611,8 @@ ipmask_parse(const char *input, struct irc_in_addr *ip, unsigned char *pbits)
+       while (input[++pos] == '*' || input[pos] == ':') ;
+       if (input[pos] != '\0' || colon < 8)
+         return 0;
++      if (part && ii < 8)
++          ip->in6_16[ii++] = htons(part);
+       if (pbits)
+         *pbits = ii * 16;
+       return pos;
+@@ -620,6 +626,8 @@ ipmask_parse(const char *input, struct irc_in_addr *ip, unsigned char *pbits)
+     default:
+       return 0;
+     }
++    if (input[pos] != '\0')
++      return 0;
+   finish:
+     if (colon < 8) {
+       unsigned int jj;
+diff --git a/ircd/listener.c b/ircd/listener.c
+index cfa833c..6533e67 100644
+--- a/ircd/listener.c
++++ b/ircd/listener.c
+@@ -146,7 +146,9 @@ void show_ports(struct Client* sptr, const struct StatDesc* sd,
+     if (port && port != listener->addr.port)
+       continue;
+     len = 0;
+-    flags[len++] = listener_server(listener) ? 'S' : 'C';
++    flags[len++] = listener_server(listener) ? 'S'
++        : listener_webirc(listener) ? 'W'
++        : 'C';
+     if (FlagHas(&listener->flags, LISTEN_HIDDEN))
+     {
+       if (!show_hidden)
+diff --git a/ircd/m_nick.c b/ircd/m_nick.c
+index 858e84a..dd50643 100644
+--- a/ircd/m_nick.c
++++ b/ircd/m_nick.c
+@@ -154,7 +154,8 @@ int m_nick(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
+ 
+   if (IsServerPort(cptr))
+     return exit_client(cptr, cptr, &me, "Use a different port");
+-
++  if (IsWebircPort(cptr) && !cli_wline(cptr))
++    return exit_client(cptr, cptr, &me, "WebIRC authorization required");
+   /*
+    * parv[0] will be empty for clients connecting for the first time
+    */
+diff --git a/ircd/m_trace.c b/ircd/m_trace.c
+index e35f2be..442a4e5 100644
+--- a/ircd/m_trace.c
++++ b/ircd/m_trace.c
+@@ -224,6 +224,11 @@ void do_trace(struct Client *cptr, struct Client *sptr, int parc, char *parv[])
+ 		   get_client_name(acptr, HIDE_IP));
+         cnt++;
+         break;
++      case STAT_WEBIRC:
++        send_reply(sptr, RPL_TRACEUNKNOWN, conClass,
++                   get_client_name(acptr, HIDE_IP));
++        cnt++;
++        break;		
+       case STAT_UNKNOWN_SERVER:
+ 	send_reply(sptr, RPL_TRACEUNKNOWN, conClass, "Unknown Server");
+         cnt++;
+diff --git a/ircd/m_user.c b/ircd/m_user.c
+index 03d6078..1d72194 100644
+--- a/ircd/m_user.c
++++ b/ircd/m_user.c
+@@ -122,6 +122,8 @@ int m_user(struct Client *cptr, struct Client *sptr, int parc, char *parv[])
+ 
+   if (IsServerPort(cptr))
+     return exit_client(cptr, cptr, &me, "Use a different port");
++  if (IsWebircPort(cptr) && !cli_wline(cptr))
++    return exit_client(cptr, cptr, &me, "WebIRC authorization required");
+ 
+   if (parc < 5)
+     return need_more_params(sptr, "USER");
+diff --git a/ircd/m_whois.c b/ircd/m_whois.c
+index ed84d5b..79d3a96 100644
+--- a/ircd/m_whois.c
++++ b/ircd/m_whois.c
+@@ -93,6 +93,7 @@
+ #include "msg.h"
+ #include "numeric.h"
+ #include "numnicks.h"
++#include "s_conf.h"
+ #include "s_user.h"
+ #include "send.h"
+ #include "whocmds.h"
+@@ -202,6 +203,8 @@ static void do_whois(struct Client* sptr, struct Client *acptr, int parc)
+ 
+   if (user)
+   {
++    const struct wline *wline;
++	
+     if (user->away)
+        send_reply(sptr, RPL_AWAY, name, user->away);
+ 
+@@ -225,12 +228,16 @@ static void do_whois(struct Client* sptr, struct Client *acptr, int parc)
+      *       probably a good place to add them :)
+      */
+ 
+-    if (MyConnect(acptr) &&
+-        (IsAnOper(sptr) ||
+-         (!IsNoIdle(acptr) && (!feature_bool(FEAT_HIS_WHOIS_IDLETIME) ||
+-                              sptr == acptr || parc >= 3))))
++    if (MyConnect(acptr) && (!feature_bool(FEAT_HIS_WHOIS_IDLETIME) ||
++                             (sptr == acptr || IsAnOper(sptr) || parc >= 3)))
+        send_reply(sptr, RPL_WHOISIDLE, name, CurrentTime - user->last,
+                   cli_firsttime(acptr));
++    if (MyConnect(acptr)
++        && ((parc >= 3 && !feature_bool(FEAT_HIS_WEBIRC))
++            || sptr == acptr || IsAnOper(sptr))
++        && ((wline = cli_wline(acptr)) != NULL))
++        send_reply(sptr, RPL_WHOISWEBIRC, name, wline->description
++                   ? wline->description : "(unspecified WebIRC proxy)");
+   }
+ }
+ 
+diff --git a/ircd/parse.c b/ircd/parse.c
+index dd56879..ff11206 100644
+--- a/ircd/parse.c
++++ b/ircd/parse.c
+@@ -433,7 +433,7 @@ struct Message msgtab[] = {
+     TOK_VERSION,
+     0, MAXPARA, MFLG_SLOW | MFLG_UNREG, 0, NULL,
+     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
+-    { m_version, m_version, ms_version, mo_version, m_ignore }
++    { m_version, m_version, m_version, m_version, m_ignore }
+   },
+   {
+     MSG_STATS,
+@@ -545,7 +545,7 @@ struct Message msgtab[] = {
+     TOK_HASH,
+     0, MAXPARA, MFLG_SLOW, 0, NULL,
+     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
+-    { m_unregistered, m_not_oper, m_hash, m_hash, m_ignore }
++    { m_unregistered, m_hash, m_hash, m_hash, m_ignore }
+   },
+   {
+     MSG_REHASH,
+@@ -624,6 +624,13 @@ struct Message msgtab[] = {
+     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
+     { m_unregistered, m_sethost, ms_sethost, m_sethost, m_ignore }
+   },
++  {
++    MSG_WEBIRC,
++    TOK_WEBIRC,
++    0, MAXPARA, MFLG_SLOW, 0, NULL,
++    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
++    { m_webirc, m_registered, m_ignore, m_registered, m_ignore }
++  },
+ #if WE_HAVE_A_REAL_CAPABILITY_NOW
+   {
+     MSG_CAP,
+@@ -633,23 +640,6 @@ struct Message msgtab[] = {
+     { m_cap, m_cap, m_ignore, m_cap, m_ignore }
+   },
+ #endif
+-
+-  /*
+-   * - ASUKA ---------------------------------------------------------------------
+-   * Add the command for CHECK.
+-   * This was adapted from Lain for use in Asuka.
+-   * Original code by Durzel (durzel@quakenet.org).
+-   *
+-   * qoreQ (qoreQ@quakenet.org) - 08/14/2002
+-   * -----------------------------------------------------------------------------
+-   */
+-  {
+-    MSG_CHECK,
+-    TOK_CHECK,
+-    0, MAXPARA, MFLG_SLOW, 0, NULL,
+-    { m_unregistered, m_not_oper, m_check, m_check, m_ignore }
+-  },
+-
+   /* This command is an alias for QUIT during the unregistered part of
+    * of the server.  This is because someone jumping via a broken web
+    * proxy will send a 'POST' as their first command - which we will
+@@ -834,7 +824,6 @@ parse_client(struct Client *cptr, char *buffer, char *bufend)
+   char*           s;
+   int             i;
+   int             paramcount;
+-  int             noprefix = 0;
+   struct Message* mptr;
+   MessageHandler  handler = 0;
+ 
+@@ -852,8 +841,6 @@ parse_client(struct Client *cptr, char *buffer, char *bufend)
+     while (*ch == ' ')
+       ch++;                     /* Advance to command */
+   }
+-  else
+-    noprefix = 1;
+   if (*ch == '\0')
+   {
+     ServerStats->is_empt++;
+@@ -892,14 +879,8 @@ parse_client(struct Client *cptr, char *buffer, char *bufend)
+   paramcount = mptr->parameters;
+   i = bufend - ((s) ? s : ch);
+   mptr->bytes += i;
+-  if ((mptr->flags & MFLG_SLOW) || !IsAnOper(cptr)) {
+-    if (IsAnOper(cptr)) {
+-      cli_since(cptr) += 1;
+-    } else {
+-      cli_since(cptr) += (2 + i / 120);
+-    }
+-  }
+-
++  if ((mptr->flags & MFLG_SLOW) || !IsAnOper(cptr))
++    cli_since(cptr) += (2 + i / 120);
+   /*
+    * Allow only 1 msg per 2 seconds
+    * (on average) to prevent dumping.
+@@ -1067,6 +1048,7 @@ int parse_server(struct Client *cptr, char *buffer, char *bufend)
+      */
+     if (0 == i)
+     {
++      Debug((DEBUG_ERROR, "Missing prefix from %C: %s", cptr, ch));
+       protocol_violation(cptr,"Missing Prefix");
+       from = cptr;
+     }
+@@ -1153,6 +1135,12 @@ int parse_server(struct Client *cptr, char *buffer, char *bufend)
+   if (len == 3 && IsDigit(*ch))
+   {
+     numeric = (*ch - '0') * 100 + (*(ch + 1) - '0') * 10 + (*(ch + 2) - '0');
++    if ((numeric < 1) || (numeric > 999))
++    {
++      Debug((DEBUG_NOTICE, "Bad numeric: Message (%s) coming from (%s)",
++          buffer, cli_name(cptr)));
++      return -1;
++    }
+     paramcount = 2; /* destination, and the rest of it */
+     ServerStats->is_num++;
+     mptr = NULL;                /* Init. to avoid stupid compiler warning :/ */
+diff --git a/ircd/s_auth.c b/ircd/s_auth.c
+index bfd58c0..1044dc1 100644
+--- a/ircd/s_auth.c
++++ b/ircd/s_auth.c
+@@ -211,6 +211,31 @@ static int preregister_user(struct Client *cptr);
+ typedef int (*iauth_cmd_handler)(struct IAuth *iauth, struct Client *cli,
+ 				 int parc, char **params);
+ 
++/** Copies a username, cleaning it in the process.
++ *
++ * @param[out] dest Destination buffer for user name.
++ * @param[in] src Source buffer for user name.  Must be distinct from
++ *   \a dest.
++ */
++void clean_username(char *dest, const char *src)
++{
++  int rlen = USERLEN;
++  char ch;
++
++  /* First character can be ~, later characters cannot. */
++  if (!IsCntrl(*src))
++  {
++    ch = *src++;
++    *dest++ = IsUserChar(ch) ? ch : '_';
++    rlen--;
++  }
++  while (rlen-- && !IsCntrl(ch = *src++))
++  {
++    *dest++ = (IsUserChar(ch) && (ch != '~')) ? ch : '_';
++  }
++  *dest = '\0';
++}
++
+ /** Set username for user associated with \a auth.
+  * @param[in] auth Client authorization request to work on.
+  * @return Zero if client is kept, CPTR_KILLED if client rejected.
+@@ -339,7 +364,7 @@ static int check_auth_finished(struct AuthRequest *auth)
+ {
+   enum AuthRequestFlag flag;
+   int res;
+-
++	
+   /* Check non-iauth registration blocking flags. */
+   for (flag = 0; flag <= AR_LAST_SCAN; ++flag)
+     if (FlagHas(&auth->flags, flag))
+@@ -354,7 +379,17 @@ static int check_auth_finished(struct AuthRequest *auth)
+       && !FlagHas(&auth->flags, AR_IAUTH_HURRY)
+       && preregister_user(auth->client))
+     return CPTR_KILLED;
+-
++  
++  struct User   *user;
++  struct Client *sptr;
++  /* Copy username to struct User.username for kill checking. */
++  sptr = auth->client;
++  user = cli_user(sptr);
++  if (cli_wline(sptr)) /* trust USER if we trusted WEBIRC */
++  {
++    ircd_strncpy(cli_username(sptr), user->username, USERLEN);
++  }
++	
+   /* If we have not done so, check client password.  Do this as soon
+    * as possible so that iauth's challenge/response (which uses PASS
+    * for responses) is not confused with the client's password.
+@@ -803,21 +838,29 @@ static void auth_dns_callback(void* vptr, const struct irc_in_addr *addr, const
+   struct AuthRequest* auth = (struct AuthRequest*) vptr;
+   assert(0 != auth);
+ 
++  /* Clear the dns-pending flag so exit_client() cleans up properly. */
+   FlagClr(&auth->flags, AR_DNS_PENDING);
++
+   if (!addr) {
+     /* DNS entry was missing for the IP. */
+     if (IsUserPort(auth->client))
+       sendheader(auth->client, REPORT_FAIL_DNS);
+-    sendto_iauth(auth->client, "d");
+   } else if (!irc_in_addr_valid(addr)
+              || (irc_in_addr_cmp(&cli_ip(auth->client), addr)
+                  && irc_in_addr_cmp(&auth->original, addr))) {
+-    /* IP for hostname did not match client's IP. */
+-    sendto_opmask_butone(0, SNO_IPMISMATCH, "IP# Mismatch: %s != %s[%s]",
+-                         cli_sock_ip(auth->client), h_name,
+-                         ircd_ntoa(addr));
+-    if (IsUserPort(auth->client))
++    if (IsUserPort(auth->client)) {
++      /* IP for hostname did not match client's IP. */
++      sendto_opmask_butone(0, SNO_IPMISMATCH, "IP# Mismatch: %s != %s[%s]",
++                           cli_sock_ip(auth->client), h_name,
++                           ircd_ntoa(addr));
+       sendheader(auth->client, REPORT_IP_MISMATCH);
++    } else {
++      /* Mismatch for a server, do not send to opers. */
++      log_write(LS_NETWORK, L_NOTICE, LOG_NOSNOTICE,
++                "IP# Mismatch: %s != %s[%s]",
++                cli_sock_ip(auth->client), h_name,
++                ircd_ntoa(addr));
++    }
+     if (feature_bool(FEAT_KILL_IPMISMATCH)) {
+       exit_client(auth->client, auth->client, &me, "IP mismatch");
+       return;
+@@ -826,13 +869,11 @@ static void auth_dns_callback(void* vptr, const struct irc_in_addr *addr, const
+     /* Hostname did not look valid. */
+     if (IsUserPort(auth->client))
+       sendheader(auth->client, REPORT_INVAL_DNS);
+-    sendto_iauth(auth->client, "d");
+   } else {
+     /* Hostname and mappings checked out. */
+     if (IsUserPort(auth->client))
+       sendheader(auth->client, REPORT_FIN_DNS);
+     ircd_strncpy(cli_sockhost(auth->client), h_name, HOSTLEN);
+-    sendto_iauth(auth->client, "N %s", h_name);
+   }
+   check_auth_finished(auth);
+ }
+@@ -969,21 +1010,25 @@ void start_auth(struct Client* client)
+   }
+   auth->port = remote.port;
+ 
+-  /* Try to start DNS lookup. */
+-  start_dns_query(auth);
+-
+-  /* Try to start ident lookup. */
+-  start_auth_query(auth);
+-
+   /* Set required client inputs for users. */
+-  if (IsUserPort(client)) {
++  if (IsUserPort(client) || IsWebircPort(client)) {
+     cli_user(client) = make_user(client);
+     cli_user(client)->server = &me;
+     FlagSet(&auth->flags, AR_NEEDS_USER);
+     FlagSet(&auth->flags, AR_NEEDS_NICK);
+ 
+-    /* Try to start iauth lookup. */
+-    start_iauth_query(auth);
++    if (IsUserPort(client)) {
++      /* Try to start iauth lookup. */
++      start_iauth_query(auth);
++    }
++  }
++
++  if (!IsWebircPort(client)) {
++    /* Try to start DNS lookup. */
++    start_dns_query(auth);
++
++    /* Try to start ident lookup. */
++    start_auth_query(auth);
+   }
+ 
+   /* Add client to GlobalClientList. */
+@@ -993,6 +1038,46 @@ void start_auth(struct Client* client)
+   check_auth_finished(auth);
+ }
+ 
++/** Set a client's username, hostname and IP with minimal checking.
++ * (The spoofed values should be from a trusted source.)
++ *
++ * @param[in] auth Authorization request for client.
++ * @param[in] username Requested username (possibly null).
++ * @param[in] hostname Requested hostname.
++ * @param[in] ip Requested IP address.
++ * @return Zero if client should be kept, negative if killed if rejected.
++ */
++int auth_spoof_user(struct AuthRequest *auth, const char *username, const char *hostname, const char *ip)
++{
++  struct Client *sptr = auth->client;
++  time_t next_target = 0;
++
++  if (!auth_verify_hostname(hostname, HOSTLEN))
++    return 1;
++  if (!ipmask_parse(ip, &cli_ip(sptr), NULL))
++    return 2;
++  if (!IPcheck_local_connect(&cli_ip(sptr), &next_target)) {
++    ++ServerStats->is_throttled;
++    return exit_client(sptr, sptr, &me, "Your host is trying to (re)connect too fast -- throttled");
++  }
++  SetIPChecked(sptr);
++
++  if (next_target)
++    cli_nexttarget(sptr) = next_target;
++  ircd_strncpy(cli_sock_ip(sptr), ip, SOCKIPLEN);
++  ircd_strncpy(cli_sockhost(sptr), hostname, HOSTLEN);
++  if (username) {
++    ircd_strncpy(cli_username(sptr), username, USERLEN);
++    SetGotId(sptr);
++  }
++
++  start_iauth_query(auth);
++  if (username && IAuthHas(iauth, IAUTH_UNDERNET))
++    sendto_iauth(sptr, "u %s", cli_username(sptr));
++
++  return check_auth_finished(auth);
++}
++
+ /** Mark that a user has PONGed while unregistered.
+  * @param[in] auth Authorization request for client.
+  * @param[in] cookie PONG cookie value sent by client.
+@@ -1752,7 +1837,8 @@ static int iauth_cmd_ip_address(struct IAuth *iauth, struct Client *cli,
+   memcpy(&cli_ip(cli), &addr, sizeof(cli_ip(cli)));
+   IPcheck_remote_connect(cli, 0);
+ 
+-  return 0;
++  /* Treat as a DNS update to trigger G-line/Kill checks. */
++  return AR_DNS_PENDING;
+ }
+ 
+ /** Find a ConfItem structure for a named connection class.
+diff --git a/ircd/s_bsd.c b/ircd/s_bsd.c
+index 5d22a02..40d26ed 100644
+--- a/ircd/s_bsd.c
++++ b/ircd/s_bsd.c
+@@ -182,7 +182,7 @@ int init_connection_limits(void)
+   if (0 == limit)
+     return 1;
+   if (limit < 0) {
+-    fprintf(stderr, "error setting max fd's to %d\n", limit);
++    fprintf(stderr, "error setting max fds to %d: %s\n", limit, strerror(errno));
+   }
+   else if (limit > 0) {
+     fprintf(stderr, "ircd fd table too big\nHard Limit: %d IRC max: %d\n",
+@@ -219,6 +219,12 @@ static int connect_inet(struct ConfItem* aconf, struct Client* cptr)
+   cli_fd(cptr) = os_socket(local, SOCK_STREAM, cli_name(cptr), family);
+   if (cli_fd(cptr) < 0)
+     return 0;
++#ifdef AF_INET6
++  if ((family == 0) && !irc_in_addr_is_ipv4(&local->addr))
++    family = AF_INET6;
++  else
++#endif
++    family = AF_INET;
+ 
+   /*
+    * save connection info in client
+@@ -238,7 +244,7 @@ static int connect_inet(struct ConfItem* aconf, struct Client* cptr)
+   /*
+    * Set the TOS bits - this is nonfatal if it doesn't stick.
+    */
+-  if (!os_set_tos(cli_fd(cptr), FEAT_TOS_SERVER)) {
++  if (!os_set_tos(cli_fd(cptr), feature_int(FEAT_TOS_SERVER))) {
+     report_error(TOS_ERROR_MSG, cli_name(cptr), errno);
+   }
+   if ((result = os_connect_nonb(cli_fd(cptr), &aconf->address)) == IO_FAILURE) {
+@@ -315,7 +321,9 @@ static int completed_connection(struct Client* cptr)
+    * get the socket status from the fd first to check if
+    * connection actually succeeded
+    */
+-  if ((cli_error(cptr) = os_get_sockerr(cli_fd(cptr)))) {
++  if (cli_fd(cptr) >= 0)
++      cli_error(cptr) = os_get_sockerr(cli_fd(cptr));
++  if (cli_error(cptr) != 0) {
+     const char* msg = strerror(cli_error(cptr));
+     if (!msg)
+       msg = "Unknown error";
+@@ -354,7 +362,7 @@ static int completed_connection(struct Client* cptr)
+   cli_lasttime(cptr) = CurrentTime;
+   ClearPingSent(cptr);
+ 
+-  sendrawto_one(cptr, MSG_SERVER " %s 1 %Tu %Tu J%s %s%s +%s6n :%s",
++  sendrawto_one(cptr, MSG_SERVER " %s 1 %Tu %Tu J%s %s%s +%s6 :%s",
+                 cli_name(&me), cli_serv(&me)->timestamp, newts,
+ 		MAJOR_PROTOCOL, NumServCap(&me),
+ 		feature_bool(FEAT_HUB) ? "h" : "", cli_info(&me));
+@@ -497,6 +505,10 @@ void add_connection(struct Listener* listener, int fd) {
+   {
+     new_client = make_client(0, STAT_UNKNOWN_SERVER);
+   }
++  else if (listener_webirc(listener))
++  {
++      new_client = make_client(0, STAT_WEBIRC);
++  }
+   else
+   {
+     /*
+@@ -506,7 +518,7 @@ void add_connection(struct Listener* listener, int fd) {
+      */
+     if (!IPcheck_local_connect(&addr.addr, &next_target))
+     {
+-      ++ServerStats->is_ref;
++      ++ServerStats->is_throttled;
+       write(fd, throttle_message, strlen(throttle_message));
+       close(fd);
+       return;
+@@ -575,7 +587,7 @@ static int read_packet(struct Client *cptr, int socket_ready)
+   unsigned int length = 0;
+ 
+   if (socket_ready &&
+-      !(IsUser(cptr) && !IsOper(cptr) &&
++      !(IsUser(cptr) &&
+ 	DBufLength(&(cli_recvQ(cptr))) > feature_int(FEAT_CLIENT_FLOOD))) {
+     switch (os_recv_nonb(cli_fd(cptr), readbuf, sizeof(readbuf), &length)) {
+     case IO_SUCCESS:
+@@ -615,11 +627,8 @@ static int read_packet(struct Client *cptr, int socket_ready)
+     if (length > 0 && dbuf_put(&(cli_recvQ(cptr)), readbuf, length) == 0)
+       return exit_client(cptr, cptr, &me, "dbuf_put fail");
+ 
+-    if (IsUser(cptr)) {
+-      if (DBufLength(&(cli_recvQ(cptr))) > feature_int(FEAT_CLIENT_FLOOD)
+-	&& !IsOper(cptr))
++    if (DBufLength(&(cli_recvQ(cptr))) > feature_int(FEAT_CLIENT_FLOOD))
+       return exit_client(cptr, cptr, &me, "Excess Flood");
+-    }
+ 
+     while (DBufLength(&(cli_recvQ(cptr))) && !NoNewLine(cptr) && 
+            (IsTrusted(cptr) || cli_since(cptr) - CurrentTime < 10))
+@@ -654,22 +663,14 @@ static int read_packet(struct Client *cptr, int socket_ready)
+        */
+       if (IsHandshake(cptr) || IsServer(cptr))
+       {
+-        while (-1)
++        while (1)
+         {
+           dolen = dbuf_get(&(cli_recvQ(cptr)), readbuf, sizeof(readbuf));
+-          if (dolen <= 0)
++          if (dolen == 0)
+             return 1;
+-          else if (dolen == 0)
+-          {
+-            if (DBufLength(&(cli_recvQ(cptr))) < 510)
+-              SetFlag(cptr, FLAG_NONL);
+-            else
+-              DBufClear(&(cli_recvQ(cptr)));
+-          }
+-          else if ((IsServer(cptr) &&
+-                    server_dopacket(cptr, readbuf, dolen) == CPTR_KILLED) ||
+-                   (!IsServer(cptr) &&
+-                    connect_dopacket(cptr, readbuf, dolen) == CPTR_KILLED))
++          if ((IsServer(cptr)
++               ? server_dopacket(cptr, readbuf, dolen)
++               : connect_dopacket(cptr, readbuf, dolen)) == CPTR_KILLED)
+             return CPTR_KILLED;
+         }
+       }
+@@ -865,6 +866,11 @@ static void client_sock_callback(struct Event* ev)
+   case ET_ERROR: /* an error occurred */
+     fallback = cli_info(cptr);
+     cli_error(cptr) = ev_data(ev);
++    /* If the OS told us we have a bad file descriptor, we should
++     * record that for future reference.
++     */
++    if (cli_error(cptr) == EBADF)
++      cli_fd(cptr) = -1;
+     if (s_state(&(con_socket(con))) == SS_CONNECTING) {
+       completed_connection(cptr);
+       /* for some reason, the os_get_sockerr() in completed_connect()
+diff --git a/ircd/s_conf.c b/ircd/s_conf.c
+index 95577f8..4cf7ba9 100644
+--- a/ircd/s_conf.c
++++ b/ircd/s_conf.c
+@@ -76,6 +76,11 @@ struct s_map     *GlobalServiceMapList;
+ struct qline     *GlobalQuarantineList;
+ /** Global list of spoofhosts. */
+ struct sline    *GlobalSList = 0;
++/** Global list of webirc authorizations. */
++struct wline*      GlobalWebircList;
++
++/** Flag for whether to perform ident lookups. */
++int DoIdentLookups;
+ 
+ /** Current line number in scanner input. */
+ int lineno;
+@@ -801,6 +806,23 @@ find_quarantine(const char *chname)
+   return NULL;
+ }
+ 
++/** Find a WebIRC authorization for the given client address.
++ * @param addr IP address to search for.
++ * @param passwd Client-provided password for block.
++ * @return WebIRC authorization block, or NULL if none exists.
++ */
++const struct wline *
++find_webirc(const struct irc_in_addr *addr, const char *passwd)
++{
++  struct wline *wline;
++
++  for (wline = GlobalWebircList; wline; wline = wline->next)
++    if (ipmask_check(addr, &wline->ip, wline->bits)
++        && (0 == strcmp(wline->passwd, passwd)))
++      return wline;
++  return NULL;
++}
++
+ /** Free all qline structs from #GlobalQuarantineList. */
+ void clear_quarantines(void)
+ {
+@@ -814,6 +836,31 @@ void clear_quarantines(void)
+   }
+ }
+ 
++/** Mark everything in #GlobalWebircList stale. */
++static void webirc_mark_stale(void)
++{
++  struct wline *wline;
++  for (wline = GlobalWebircList; wline; wline = wline->next)
++    wline->stale = 1;
++}
++
++/** Remove any still-stale entries in #GlobalWebircList. */
++static void webirc_remove_stale(void)
++{
++  struct wline *wline, **pp_w;
++
++  for (pp_w = &GlobalWebircList; (wline = *pp_w) != NULL; ) {
++    if (wline->stale) {
++      *pp_w = wline->next;
++      MyFree(wline->passwd);
++      MyFree(wline->description);
++      MyFree(wline);
++    } else {
++      pp_w = &wline->next;
++    }
++  }
++}
++
+ /** When non-zero, indicates that a configuration error has been seen in this pass. */
+ static int conf_error;
+ /** When non-zero, indicates that the configuration file was loaded at least once. */
+@@ -951,8 +998,10 @@ int rehash(struct Client *cptr, int sig)
+   class_mark_delete();
+   mark_listeners_closing();
+   auth_mark_closing();
++  webirc_mark_stale();
+   close_mappings();
+-
++  DoIdentLookups = 0;
++  
+   read_configuration_file();
+ 
+   if (sig != 2)
+@@ -980,6 +1029,7 @@ int rehash(struct Client *cptr, int sig)
+ 
+   for (i = 0; i <= HighestFd; i++) {
+     if ((acptr = LocalClientArray[i])) {
++      const struct wline *wline;		
+       assert(!IsMe(acptr));
+       if (IsServer(acptr))
+         det_confs_butmask(acptr, ~(CONF_UWORLD | CONF_ILLEGAL));
+@@ -996,11 +1046,16 @@ int rehash(struct Client *cptr, int sig)
+         if (exit_client(cptr, acptr, &me, found_g == -2 ? "G-lined" :
+             "K-lined") == CPTR_KILLED)
+           ret = CPTR_KILLED;
++      } else if ((wline = cli_wline(acptr)) && wline->stale) {
++        if (exit_client(cptr, acptr, &me, "WebIRC authorization removed")
++            == CPTR_KILLED)
++          ret = CPTR_KILLED;
+       }
+     }
+   }
+ 
+   attach_conf_uworld(&me);
++  webirc_remove_stale();
+ 
+   return ret;
+ }
+diff --git a/ircd/s_debug.c b/ircd/s_debug.c
+index bda50c3..57ca7f0 100644
+--- a/ircd/s_debug.c
++++ b/ircd/s_debug.c
+@@ -78,41 +78,40 @@ const char* debug_serveropts(void)
+   bp = feature_int(FEAT_BUFFERPOOL);
+   if (bp < 1000000) {
+     AddC('b');
+-    if (bp > 99999)
+-      AddC((char)('0' + (bp / 100000)));
+-    if (bp > 9999)
+-      AddC((char)('0' + (bp / 10000) % 10));
++    AddC((char)('0' + (bp / 100000)));
++    AddC((char)('0' + (bp / 10000) % 10));
+     AddC((char)('0' + (bp / 1000) % 10));
+   } else {
+     AddC('B');
+-    if (bp > 99999999)
+-      AddC((char)('0' + (bp / 100000000)));
+-    if (bp > 9999999)
+-      AddC((char)('0' + (bp / 10000000) % 10));
++    AddC((char)('0' + (bp / 100000000)));
++    AddC((char)('0' + (bp / 10000000) % 10));
+     AddC((char)('0' + (bp / 1000000) % 10));
+   }
+ 
+ #ifndef NDEBUG
+   AddC('A');
++#else
++  AddC('-');
+ #endif
+ #ifdef  DEBUGMODE
+   AddC('D');
++#else
++  AddC('-');
+ #endif
+ 
+-  if (feature_bool(FEAT_HUB))
+-    AddC('H');
+-
+-  if (feature_bool(FEAT_IDLE_FROM_MSG))
+-    AddC('M');
+-
+-  if (feature_bool(FEAT_RELIABLE_CLOCK))
+-    AddC('R');
++  AddC(feature_bool(FEAT_HUB) ? 'H' : '-');
++  AddC(feature_bool(FEAT_IDLE_FROM_MSG) ? 'M' : '-');
++  AddC(feature_bool(FEAT_RELIABLE_CLOCK) ? 'R' : '-');
+ 
+ #if defined(USE_POLL) && defined(HAVE_POLL_H)
+   AddC('U');
++#else
++  AddC('-');
+ #endif
+ #ifdef  IPV6
+   AddC('6');
++#else
++  AddC('-');
+ #endif
+ 
+   serveropts[i] = '\0';
+@@ -150,11 +149,14 @@ void vdebug(int level, const char *form, va_list vl)
+ {
+   static int loop = 0;
+   int err = errno;
++  int l_level = level;
++  if (l_level >= L_LAST_LEVEL)
++    l_level = L_DEBUG;
+ 
+   if (!loop && (debuglevel >= 0) && (level <= debuglevel))
+   {
+     loop = 1;
+-    log_vwrite(LS_DEBUG, L_DEBUG, 0, form, vl);
++    log_vwrite(LS_DEBUG, l_level, 0, form, vl);
+     loop = 0;
+   }
+   errno = err;
+@@ -389,7 +391,7 @@ void count_memory(struct Client *cptr, const struct StatDesc *sd,
+ #endif
+ 
+   send_reply(cptr, SND_EXPLICIT | RPL_STATSDEBUG,
+-	     ":Total: ww %zu ch %zu cl %zu co %zu db %zu ms %zu mb %zu",
+-	     totww, totch, totcl, com, dbufs_allocated, msg_allocated,
++	     ":Total: tot %zu ww %zu ch %zu cl %zu co %zu db %zu ms %zu mb %zu",
++	     tot, totww, totch, totcl, com, dbufs_allocated, msg_allocated,
+ 	     msgbuf_allocated);
+ }
+diff --git a/ircd/s_err.c b/ircd/s_err.c
+index 9ea3f41..99c2741 100644
+--- a/ircd/s_err.c
++++ b/ircd/s_err.c
+@@ -472,7 +472,7 @@ static Numeric replyTable[] = {
+ /* 219 */
+   { RPL_ENDOFSTATS, "%s :End of /STATS report", "219" },
+ /* 220 */
+-  { 0 },
++  { RPL_STATSWLINE, "W %s %d :%s", "220" },
+ /* 221 */
+   { RPL_UMODEIS, "%s", "221" },
+ /* 222 */
+@@ -672,7 +672,7 @@ static Numeric replyTable[] = {
+ /* 319 */
+   { RPL_WHOISCHANNELS, "%s :%s", "319" },
+ /* 320 */
+-  { 0 },
++  { RPL_WHOISWEBIRC, "%s :is connected via %s", "320" },
+ /* 321 */
+   { RPL_LISTSTART, "Channel :Users  Name", "321" },
+ /* 322 */
+diff --git a/ircd/s_stats.c b/ircd/s_stats.c
+index faa40b1..305ee72 100644
+--- a/ircd/s_stats.c
++++ b/ircd/s_stats.c
+@@ -532,6 +532,29 @@ stats_servers_verbose(struct Client* sptr, const struct StatDesc* sd,
+   }
+ }
+ 
++/** Lists WebIRC authorizations.
++ * @param[in] to Client requesting statistics.
++ * @param[in] sd Stats descriptor for request (ignored).
++ * @param[in] param Extra parameter from user (ignored).
++ */
++static void
++stats_webirc(struct Client *to, const struct StatDesc *sd, char *param)
++{
++  struct wline *wline;
++  char ip_text[SOCKIPLEN + 1];
++
++  for (wline = GlobalWebircList; wline; wline = wline->next) {
++    const char *desc = wline->description;
++    if (!desc)
++      desc = "(no description provided)";
++    if (wline->hidden)
++      strcpy(ip_text, "*");
++    else
++      ircd_ntoa_r(ip_text, &wline->ip);
++    send_reply(to, RPL_STATSWLINE, ip_text, wline->bits, desc);
++  }
++}
++
+ /** Display objects allocated (and total memory used by them) for
+  * several types of structures.
+  * @param[in] to Client requesting statistics.
+@@ -653,6 +676,9 @@ struct StatDesc statsinfo[] = {
+   { 'w', "userload", STAT_FLAG_OPERFEAT, FEAT_HIS_STATS_w,
+     calc_load, 0,
+     "Userload statistics." },
++  { 'W', "webirc", (STAT_FLAG_OPERFEAT | STAT_FLAG_CASESENS), FEAT_HIS_STATS_W,
++    stats_webirc, 0,
++    "WebIRC authorizations." },
+   { 'x', "memusage", STAT_FLAG_OPERFEAT, FEAT_HIS_STATS_x,
+     stats_meminfo, 0,
+     "List usage information." },
+-- 
+2.34.1
+
+
+From 25656dc30aede7c16e32961d49043850eb5ea74a Mon Sep 17 00:00:00 2001
+From: Andreas Pschorn <source@midiandmore.de>
+Date: Sat, 3 Aug 2024 15:35:13 +0200
+Subject: [PATCH 2/2] 	neue Datei:     ircd/m_webirc.c
+
+---
+ ircd/m_webirc.c | 135 ++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 135 insertions(+)
+ create mode 100644 ircd/m_webirc.c
+
+diff --git a/ircd/m_webirc.c b/ircd/m_webirc.c
+new file mode 100644
+index 0000000..9147c06
+--- /dev/null
++++ b/ircd/m_webirc.c
+@@ -0,0 +1,135 @@
++/*
++ * IRC - Internet Relay Chat, ircd/m_webirc.c
++ * Copyright (C) 1990 Jarkko Oikarinen and
++ *                    University of Oulu, Computing Center
++ *
++ * See file AUTHORS in IRC package for additional names of
++ * the programmers.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 1, or (at your option)
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ *
++ * $Id: m_webirc.c,v 1.25 2005/09/13 15:17:46 entrope Exp $
++ */
++
++/*
++ * m_functions execute protocol messages on this server:
++ *
++ *    cptr    is always NON-NULL, pointing to a *LOCAL* client
++ *            structure (with an open socket connected!). This
++ *            identifies the physical socket where the message
++ *            originated (or which caused the m_function to be
++ *            executed--some m_functions may call others...).
++ *
++ *    sptr    is the source of the message, defined by the
++ *            prefix part of the message if present. If not
++ *            or prefix not found, then sptr==cptr.
++ *
++ *            (!IsServer(cptr)) => (cptr == sptr), because
++ *            prefixes are taken *only* from servers...
++ *
++ *            (IsServer(cptr))
++ *                    (sptr == cptr) => the message didn't
++ *                    have the prefix.
++ *
++ *                    (sptr != cptr && IsServer(sptr) means
++ *                    the prefix specified servername. (?)
++ *
++ *                    (sptr != cptr && !IsServer(sptr) means
++ *                    that message originated from a remote
++ *                    user (not local).
++ *
++ *            combining
++ *
++ *            (!IsServer(sptr)) means that, sptr can safely
++ *            taken as defining the target structure of the
++ *            message in this server.
++ *
++ *    *Always* true (if 'parse' and others are working correct):
++ *
++ *    1)      sptr->from == cptr  (note: cptr->from == cptr)
++ *
++ *    2)      MyConnect(sptr) <=> sptr == cptr (e.g. sptr
++ *            *cannot* be a local connection, unless it's
++ *            actually cptr!). [MyConnect(x) should probably
++ *            be defined as (x == x->from) --msa ]
++ *
++ *    parc    number of variable parameter strings (if zero,
++ *            parv is allowed to be NULL)
++ *
++ *    parv    a NULL terminated list of parameter pointers,
++ *
++ *                    parv[0], sender (prefix string), if not present
++ *                            this points to an empty string.
++ *                    parv[1]...parv[parc-1]
++ *                            pointers to additional parameters
++ *                    parv[parc] == NULL, *always*
++ *
++ *            note:   it is guaranteed that parv[0]..parv[parc-1] are all
++ *                    non-NULL pointers.
++ */
++#include "config.h"
++
++#include "client.h"
++#include "ircd.h"
++#include "ircd_features.h"
++#include "ircd_reply.h"
++#include "ircd_string.h"
++#include "s_auth.h"
++#include "s_conf.h"
++#include "s_misc.h"
++
++#include <string.h>
++
++/*
++ * m_webirc
++ *
++ * parv[0] = sender prefix
++ * parv[1] = password
++ * parv[2] = ident
++ * parv[3] = hostname
++ * parv[4] = ip
++ */
++int m_webirc(struct Client *cptr, struct Client *sptr, int parc, char *parv[])
++{
++  const struct wline *wline;
++  const char *passwd;
++  const char *hostname;
++  const char *ip;
++
++  if (!IsWebircPort(cptr))
++    return exit_client(cptr, cptr, &me, "Use a different port");
++
++  if (parc < 5)
++    return need_more_params(sptr, "WEBIRC");
++
++  passwd = parv[1];
++  hostname = parv[3];
++  ip = parv[4];
++
++  if (EmptyString(ip))
++    return exit_client(cptr, cptr, &me, "WEBIRC needs IP address");
++
++  if (!(wline = find_webirc(&cli_ip(sptr), passwd)))
++    return exit_client_msg(cptr, cptr, &me, "WEBIRC not authorized");
++  cli_wline(sptr) = wline;
++
++  /* Treat client as a normally connecting user from now on. */
++  cli_status(sptr) = STAT_UNKNOWN_USER;
++
++  int res = auth_spoof_user(cli_auth(cptr), NULL, hostname, ip);
++  if (res > 0)
++    return exit_client(cptr, cptr, &me, "WEBIRC invalid spoof");
++  return res;
++}
+-- 
+2.34.1
+
