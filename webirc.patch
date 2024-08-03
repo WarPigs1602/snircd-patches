@@ -1,6 +1,6 @@
-From 05a883860acfc2e7b471693146e512ba8780b74c Mon Sep 17 00:00:00 2001
+From 4b9e7a021926c89498db4877d8617b55c2aee920 Mon Sep 17 00:00:00 2001
 From: Andreas Pschorn <source@midiandmore.de>
-Date: Sat, 3 Aug 2024 15:34:21 +0200
+Date: Sat, 3 Aug 2024 18:21:00 +0200
 Subject: [PATCH 1/2]  Auf Branch master  Ihr Branch ist auf demselben Stand
  wie 'origin/master'.
 MIME-Version: 1.0
@@ -57,14 +57,14 @@ Content-Transfer-Encoding: 8bit
  ircd/m_trace.c          |   5 ++
  ircd/m_user.c           |   2 +
  ircd/m_whois.c          |  15 +++--
- ircd/parse.c            |  48 ++++++---------
+ ircd/parse.c            |  33 ++++++-----
  ircd/s_auth.c           | 126 +++++++++++++++++++++++++++++++++-------
  ircd/s_bsd.c            |  52 +++++++++--------
  ircd/s_conf.c           |  57 +++++++++++++++++-
  ircd/s_debug.c          |  40 +++++++------
  ircd/s_err.c            |   4 +-
  ircd/s_stats.c          |  26 +++++++++
- 26 files changed, 406 insertions(+), 108 deletions(-)
+ 26 files changed, 407 insertions(+), 92 deletions(-)
 
 diff --git a/include/client.h b/include/client.h
 index 4da341e..9f14983 100644
@@ -619,7 +619,7 @@ index ed84d5b..79d3a96 100644
  }
  
 diff --git a/ircd/parse.c b/ircd/parse.c
-index dd56879..ff11206 100644
+index dd56879..494855c 100644
 --- a/ircd/parse.c
 +++ b/ircd/parse.c
 @@ -433,7 +433,7 @@ struct Message msgtab[] = {
@@ -654,31 +654,16 @@ index dd56879..ff11206 100644
  #if WE_HAVE_A_REAL_CAPABILITY_NOW
    {
      MSG_CAP,
-@@ -633,23 +640,6 @@ struct Message msgtab[] = {
-     { m_cap, m_cap, m_ignore, m_cap, m_ignore }
+@@ -649,7 +656,7 @@ struct Message msgtab[] = {
+     0, MAXPARA, MFLG_SLOW, 0, NULL,
+     { m_unregistered, m_not_oper, m_check, m_check, m_ignore }
    },
- #endif
 -
--  /*
--   * - ASUKA ---------------------------------------------------------------------
--   * Add the command for CHECK.
--   * This was adapted from Lain for use in Asuka.
--   * Original code by Durzel (durzel@quakenet.org).
--   *
--   * qoreQ (qoreQ@quakenet.org) - 08/14/2002
--   * -----------------------------------------------------------------------------
--   */
--  {
--    MSG_CHECK,
--    TOK_CHECK,
--    0, MAXPARA, MFLG_SLOW, 0, NULL,
--    { m_unregistered, m_not_oper, m_check, m_check, m_ignore }
--  },
--
++  
    /* This command is an alias for QUIT during the unregistered part of
     * of the server.  This is because someone jumping via a broken web
     * proxy will send a 'POST' as their first command - which we will
-@@ -834,7 +824,6 @@ parse_client(struct Client *cptr, char *buffer, char *bufend)
+@@ -834,7 +841,6 @@ parse_client(struct Client *cptr, char *buffer, char *bufend)
    char*           s;
    int             i;
    int             paramcount;
@@ -686,7 +671,7 @@ index dd56879..ff11206 100644
    struct Message* mptr;
    MessageHandler  handler = 0;
  
-@@ -852,8 +841,6 @@ parse_client(struct Client *cptr, char *buffer, char *bufend)
+@@ -852,8 +858,6 @@ parse_client(struct Client *cptr, char *buffer, char *bufend)
      while (*ch == ' ')
        ch++;                     /* Advance to command */
    }
@@ -695,7 +680,7 @@ index dd56879..ff11206 100644
    if (*ch == '\0')
    {
      ServerStats->is_empt++;
-@@ -892,14 +879,8 @@ parse_client(struct Client *cptr, char *buffer, char *bufend)
+@@ -892,14 +896,8 @@ parse_client(struct Client *cptr, char *buffer, char *bufend)
    paramcount = mptr->parameters;
    i = bufend - ((s) ? s : ch);
    mptr->bytes += i;
@@ -712,7 +697,7 @@ index dd56879..ff11206 100644
    /*
     * Allow only 1 msg per 2 seconds
     * (on average) to prevent dumping.
-@@ -1067,6 +1048,7 @@ int parse_server(struct Client *cptr, char *buffer, char *bufend)
+@@ -1067,6 +1065,7 @@ int parse_server(struct Client *cptr, char *buffer, char *bufend)
       */
      if (0 == i)
      {
@@ -720,7 +705,7 @@ index dd56879..ff11206 100644
        protocol_violation(cptr,"Missing Prefix");
        from = cptr;
      }
-@@ -1153,6 +1135,12 @@ int parse_server(struct Client *cptr, char *buffer, char *bufend)
+@@ -1153,6 +1152,12 @@ int parse_server(struct Client *cptr, char *buffer, char *bufend)
    if (len == 3 && IsDigit(*ch))
    {
      numeric = (*ch - '0') * 100 + (*(ch + 1) - '0') * 10 + (*(ch + 2) - '0');
@@ -1342,10 +1327,14 @@ index faa40b1..305ee72 100644
 2.34.1
 
 
-From 25656dc30aede7c16e32961d49043850eb5ea74a Mon Sep 17 00:00:00 2001
+From 7e8d4ddd00fa09a0e3cc99635851081f14d77161 Mon Sep 17 00:00:00 2001
 From: Andreas Pschorn <source@midiandmore.de>
-Date: Sat, 3 Aug 2024 15:35:13 +0200
-Subject: [PATCH 2/2] 	neue Datei:     ircd/m_webirc.c
+Date: Sat, 3 Aug 2024 18:22:24 +0200
+Subject: [PATCH 2/2] =?UTF-8?q?=20Zum=20Commit=20vorgemerkte=20=C3=84nderu?=
+ =?UTF-8?q?ngen:=20=09neue=20Datei:=20=20=20=20=20ircd/m=5Fwebirc.c?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
 
 ---
  ircd/m_webirc.c | 135 ++++++++++++++++++++++++++++++++++++++++++++++++
