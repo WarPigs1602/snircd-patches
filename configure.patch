@@ -1,0 +1,35 @@
+From d5f4186f9708ab124377defa76c588bb3d40eaf1 Mon Sep 17 00:00:00 2001
+From: Andreas Pschorn <source@midiandmore.de>
+Date: Sat, 3 Aug 2024 21:32:44 +0200
+Subject: [PATCH]  Auf Branch master  Ihr Branch ist auf demselben Stand wie
+ 'origin/master'.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+ Zum Commit vorgemerkte Änderungen:
+	geändert:       configure
+
+Signed-off-by: Andreas Pschorn <source@midiandmore.de>
+---
+ configure | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/configure b/configure
+index e074b31..d803b41 100755
+--- a/configure
++++ b/configure
+@@ -10733,6 +10733,10 @@ if test x"$unet_maxcon" = xunlimited; then
+     unet_maxcon=`ulimit -Sn`
+ fi
+ unet_maxcon=`expr $unet_maxcon - 4`
++NN_MAX_CLIENT_P=262168
++if test "$unet_maxcon" -gt $NN_MAX_CLIENT_P ; then
++    unet_maxcon=$NN_MAX_CLIENT_P
++fi
+ echo "$as_me:$LINENO: checking max connections" >&5
+ echo $ECHO_N "checking max connections... $ECHO_C" >&6
+ 
+-- 
+2.34.1
+
