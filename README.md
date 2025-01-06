@@ -1,4 +1,12 @@
 In this directory are patches for [snircd](https://github.com/quakenet/snircd).<br>
 Following patches are available:<br>
-iauth-fix-webirc.patch - Fixes IAuth crashes and add the WEBIRC over IAuth command to snircd<br>
-configure.patch - Fixes the MAXCONNECTIONS bug
+webirc_sethost_iauthfix.patch - Fixes IAuth crashes, fixes sethost issues (e.g. G-Line setted by server) and add the WEBIRC over IAuth command to snircd<br>
+<br>
+To install this patch, you need a not modified installation of snircd and do following steps:<br>
+Go into your snircd directory and enter "git apply https://raw.githubusercontent.com/WarPigs1602/snircd-patches/refs/heads/main/webirc_sethost_iauthfix.patch"<br>
+Then enter "./configure", "make" and "make install"<br>
+<br>
+And the ircd will work.<br>
+<br>
+Have fun with the patches.<br>
+
