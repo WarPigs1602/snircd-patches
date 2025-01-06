@@ -300,4 +300,3 @@ index e074b31..d803b41 100755
 +fi
  echo "$as_me:$LINENO: checking max connections" >&5
  echo $ECHO_N "checking max connections... $ECHO_C" >&6
---- 
