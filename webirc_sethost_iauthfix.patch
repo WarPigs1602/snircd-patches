@@ -1,3 +1,14 @@
+diff --git a/include/gline.h b/include/gline.h
+index 502cd42..c1b875f 100644
+--- a/include/gline.h
++++ b/include/gline.h
+@@ -116,6 +116,7 @@ extern int gline_resend(struct Client *cptr, struct Gline *gline);
+ extern int gline_list(struct Client *sptr, char *userhost);
+ extern void gline_stats(struct Client *sptr, const struct StatDesc *sd,
+                         char *param);
++extern int do_gline(struct Client *cptr, struct Client *sptr, struct Gline *gline);
+ extern int gline_memory_count(size_t *gl_size);
+ extern struct Gline *IsNickGlined(struct Client *cptr, char *nick);
 diff --git a/include/handlers.h b/include/handlers.h
 index a468201..c9c8448 100644
 --- a/include/handlers.h
