@@ -7,7 +7,7 @@ Go into your snircd directory and enter "wget https://raw.githubusercontent.com/
 Then enter "git apply webirc_sethost_iauthfix.patch", "./configure", "make" and "make install"<br>
 <br>
 And the ircd will work.<br>
-When the ircd not works, please enter in you snircd folder "wget https://raw.githubusercontent.com/WarPigs1602/snircd-patches/refs/heads/main/configure.patch", "./configure", "make" and "make install"<br>
+When the ircd not works, please enter in you snircd folder "wget https://raw.githubusercontent.com/WarPigs1602/snircd-patches/refs/heads/main/configure.patch", "git apply configure.patch", "./configure", "make" and "make install"<br>
 <br>
 Have fun with the patches.<br>
 
