@@ -39,17 +39,6 @@ diff -r e1de3d14c9df include/s_auth.h
  extern int auth_set_pong(struct AuthRequest *auth, unsigned int cookie);
  extern int auth_set_user(struct AuthRequest *auth, const char *username, const char *hostname, const char *servername, const char *userinfo);
  extern int auth_set_nick(struct AuthRequest *auth, const char *nickname);
-diff -r e1de3d14c9df ircd/Makefile.in
---- a/ircd/Makefile.in	Sat Jul 20 09:18:24 2013 +0200
-+++ b/ircd/Makefile.in	Sat Jul 20 09:23:57 2013 +0200
-@@ -188,6 +188,7 @@
- 	m_wallops.c \
- 	m_wallusers.c \
- 	m_wallvoices.c \
-+	m_webirc.c \
- 	m_who.c \
- 	m_whois.c \
- 	m_whowas.c \
 diff --git a/ircd/Makefile.in b/ircd/Makefile.in
 index 01a5ea6..430b4be 100644
 --- a/ircd/Makefile.in
