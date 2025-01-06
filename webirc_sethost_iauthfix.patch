@@ -286,8 +286,7 @@ index bfd58c0..c1db48a 100644
      break;
    case ET_READ:
      iauth_read(iauth);---
- configure | 4 ++++
- 1 file changed, 4 insertions(+)
+
 diff --git a/configure b/configure
 index e074b31..d803b41 100755
 --- a/configure
@@ -302,5 +301,3 @@ index e074b31..d803b41 100755
 +fi
  echo "$as_me:$LINENO: checking max connections" >&5
  echo $ECHO_N "checking max connections... $ECHO_C" >&6
- 
--- 
