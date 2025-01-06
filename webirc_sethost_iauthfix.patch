@@ -1,28 +1,3 @@
-diff --git a/configure b/configure
-index e074b31..d803b41 100755
---- a/configure
-+++ b/configure
-@@ -10733,6 +10733,10 @@ if test x"$unet_maxcon" = xunlimited; then
-     unet_maxcon=`ulimit -Sn`
- fi
- unet_maxcon=`expr $unet_maxcon - 4`
-+NN_MAX_CLIENT_P=262168
-+if test "$unet_maxcon" -gt $NN_MAX_CLIENT_P ; then
-+    unet_maxcon=$NN_MAX_CLIENT_P
-+fi
- echo "$as_me:$LINENO: checking max connections" >&5
- echo $ECHO_N "checking max connections... $ECHO_C" >&6
-diff --git a/include/gline.h b/include/gline.h
-index 502cd42..c1b875f 100644
---- a/include/gline.h
-+++ b/include/gline.h
-@@ -116,6 +116,7 @@ extern int gline_resend(struct Client *cptr, struct Gline *gline);
- extern int gline_list(struct Client *sptr, char *userhost);
- extern void gline_stats(struct Client *sptr, const struct StatDesc *sd,
-                         char *param);
-+extern int do_gline(struct Client *cptr, struct Client *sptr, struct Gline *gline);
- extern int gline_memory_count(size_t *gl_size);
- extern struct Gline *IsNickGlined(struct Client *cptr, char *nick);
 diff --git a/include/handlers.h b/include/handlers.h
 index a468201..c9c8448 100644
 --- a/include/handlers.h
@@ -443,3 +418,28 @@ diff -r e1de3d14c9df ircd/m_webirc.c
 +
 +  return auth_set_webirc(cli_auth(cptr), parv[1], parv[2], parv[3], &ip);
 +}	 
+diff --git a/configure b/configure
+index e074b31..d803b41 100755
+--- a/configure
++++ b/configure
+@@ -10733,6 +10733,10 @@ if test x"$unet_maxcon" = xunlimited; then
+     unet_maxcon=`ulimit -Sn`
+ fi
+ unet_maxcon=`expr $unet_maxcon - 4`
++NN_MAX_CLIENT_P=262168
++if test "$unet_maxcon" -gt $NN_MAX_CLIENT_P ; then
++    unet_maxcon=$NN_MAX_CLIENT_P
++fi
+ echo "$as_me:$LINENO: checking max connections" >&5
+ echo $ECHO_N "checking max connections... $ECHO_C" >&6
+diff --git a/include/gline.h b/include/gline.h
+index 502cd42..c1b875f 100644
+--- a/include/gline.h
++++ b/include/gline.h
+@@ -116,6 +116,7 @@ extern int gline_resend(struct Client *cptr, struct Gline *gline);
+ extern int gline_list(struct Client *sptr, char *userhost);
+ extern void gline_stats(struct Client *sptr, const struct StatDesc *sd,
+                         char *param);
++extern int do_gline(struct Client *cptr, struct Client *sptr, struct Gline *gline);
+ extern int gline_memory_count(size_t *gl_size);
+ extern struct Gline *IsNickGlined(struct Client *cptr, char *nick);
