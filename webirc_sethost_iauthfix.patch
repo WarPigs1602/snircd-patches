@@ -12,6 +12,22 @@ index e074b31..d803b41 100755
 +fi
  echo "$as_me:$LINENO: checking max connections" >&5
  echo $ECHO_N "checking max connections... $ECHO_C" >&6
+ 
+diff --git a/configure.in b/configure.in
+index 025a7b6..c47d439 100644
+--- a/configure.in
++++ b/configure.in
+@@ -702,6 +702,10 @@ if test x"$unet_maxcon" = xunlimited; then
+     unet_maxcon=`ulimit -Sn`
+ fi
+ unet_maxcon=`expr $unet_maxcon - 4`
++NN_MAX_CLIENT_P=262168
++if test "$unet_maxcon" -gt $NN_MAX_CLIENT_P ; then
++    unet_maxcon=$NN_MAX_CLIENT_P
++fi
+ AC_MSG_CHECKING([max connections])
+ AC_ARG_WITH([maxcon],
+ [  --with-maxcon=maxcon    Maximum number of connections server will accept],
 diff --git a/include/gline.h b/include/gline.h
 index 502cd42..c1b875f 100644
 --- a/include/gline.h
@@ -23,6 +39,7 @@ index 502cd42..c1b875f 100644
 +extern int do_gline(struct Client *cptr, struct Client *sptr, struct Gline *gline);
  extern int gline_memory_count(size_t *gl_size);
  extern struct Gline *IsNickGlined(struct Client *cptr, char *nick);
+ 
 diff --git a/include/handlers.h b/include/handlers.h
 index a468201..c9c8448 100644
 --- a/include/handlers.h
@@ -128,7 +145,7 @@ index fdb3c25..1c6fcb0 100644
      /* If an exception matches, no ban can match. */
      if (banlist->flags & BAN_EXCEPTION)
 diff --git a/ircd/gline.c b/ircd/gline.c
-index b68225d..5da3f21 100644
+index b68225d..0430f86 100644
 --- a/ircd/gline.c
 +++ b/ircd/gline.c
 @@ -209,7 +209,7 @@ make_gline(char *nick, char *user, char *host, char *reason, time_t expire, time
@@ -153,7 +170,7 @@ index b68225d..5da3f21 100644
            else {
 -            if (match(gline->gl_host, cli_sockhost(acptr)) != 0)
 +			/* G-Line fix for setted hosts */
-+            if (match(gline->gl_host, cli_user(acptr)->host) != 0)
++            if (match(gline->gl_host, cli_user(acptr)->host) != 0 && match(gline->gl_host, cli_sockhost(acptr)) != 0)
                continue;
            }
          }
@@ -316,10 +333,10 @@ index bfd58c0..c1db48a 100644
      iauth_read(iauth);
 diff --git a/ircd/m_webirc.c b/ircd/m_webirc.c
 new file mode 100644
-index 0000000..9147c06
+index 0000000..3bd5c1c
 --- /dev/null
 +++ b/ircd/m_webirc.c
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,125 @@
 +/*
 + * IRC - Internet Relay Chat, ircd/m_webirc.c
 + * Copyright (C) 1990 Jarkko Oikarinen and
@@ -403,38 +420,45 @@ index 0000000..9147c06
 + */
 +#include "config.h"
 +
++#include "channel.h"
 +#include "client.h"
++#include "hash.h"
 +#include "ircd.h"
 +#include "ircd_features.h"
++#include "ircd_log.h"
 +#include "ircd_reply.h"
 +#include "ircd_string.h"
++#include "list.h"
++#include "msg.h"
++#include "numeric.h"
++#include "numnicks.h"
++#include "s_user.h"
 +#include "s_auth.h"
-+#include "s_conf.h"
 +#include "s_misc.h"
++#include "send.h"
++#include "struct.h"
 +
-+#include <string.h>
++/* #include <assert.h> -- Now using assert in ircd_log.h */
 +
 +/*
-+ * m_webirc
++ * ms_webirc - server message handler
 + *
-+ * parv[0] = sender prefix
-+ * parv[1] = password
-+ * parv[2] = ident
-+ * parv[3] = hostname
-+ * parv[4] = ip
++ *   parv[0] - sender prefix
++ *   parv[1] - password
++ *   parv[2] - fake username
++ *   parv[3] - fake hostname
++ *   parv[4] - fake ip address
++ *
 + */
-+int m_webirc(struct Client *cptr, struct Client *sptr, int parc, char *parv[])
++int m_webirc(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
 +{
-+  const struct wline *wline;
-+  const char *passwd;
-+  const char *hostname;
-+  const char *ip;
++  struct irc_in_addr ip;
++  
++  if (parc < 5 || EmptyString(parv[4]))
++    return need_more_params(sptr,"WEBIRC");
 +
-+  if (!IsWebircPort(cptr))
-+    return exit_client(cptr, cptr, &me, "Use a different port");
++  if (!ircd_aton(&ip, parv[4]))
++    return exit_client(cptr, cptr, &me, "Invalid IP address specified for WEBIRC");
 +
-<<<<<<< Updated upstream
 +  return auth_set_webirc(cli_auth(cptr), parv[1], parv[2], parv[3], &ip);
-+}	 
--- 
-2.34.1
++}
