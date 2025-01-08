@@ -1,3 +1,25 @@
+commit 8da0129a0cb66e36b6d17af225eba15d3074a227
+Author: WarPigs1602 <gh@midiandmore.net>
+Date:   
+
+    Added some patches
+    
+            geändert:       configure
+            geändert:       configure.in
+            geändert:       include/gline.h
+            geändert:       include/handlers.h
+            geändert:       include/msg.h
+            geändert:       include/s_auth.h
+            geändert:       ircd/Makefile.in
+            geändert:       ircd/channel.c
+            geändert:       ircd/gline.c
+            geändert:       ircd/m_account.c
+            geändert:       ircd/m_sethost.c
+            neue Datei:     ircd/m_webirc.c
+            geändert:       ircd/parse.c
+            geändert:       ircd/s_auth.c
+            geändert:       ircd/s_user.c
+
 diff --git a/configure b/configure
 index e074b31..d803b41 100755
 --- a/configure
@@ -29,13 +51,14 @@ index 025a7b6..c47d439 100644
  AC_ARG_WITH([maxcon],
  [  --with-maxcon=maxcon    Maximum number of connections server will accept],
 diff --git a/include/gline.h b/include/gline.h
-index 502cd42..c1b875f 100644
+index 502cd42..2e1f5e7 100644
 --- a/include/gline.h
 +++ b/include/gline.h
-@@ -116,6 +116,7 @@ extern int gline_resend(struct Client *cptr, struct Gline *gline);
+@@ -116,6 +116,8 @@ extern int gline_resend(struct Client *cptr, struct Gline *gline);
  extern int gline_list(struct Client *sptr, char *userhost);
  extern void gline_stats(struct Client *sptr, const struct StatDesc *sd,
                          char *param);
++extern int do_user_gline(struct Client *cptr, struct Client *sptr, struct Gline *gline);
 +extern int do_gline(struct Client *cptr, struct Client *sptr, struct Gline *gline);
  extern int gline_memory_count(size_t *gl_size);
  extern struct Gline *IsNickGlined(struct Client *cptr, char *nick);
@@ -145,10 +168,40 @@ index fdb3c25..1c6fcb0 100644
      /* If an exception matches, no ban can match. */
      if (banlist->flags & BAN_EXCEPTION)
 diff --git a/ircd/gline.c b/ircd/gline.c
-index b68225d..0430f86 100644
+index b68225d..3a855ca 100644
 --- a/ircd/gline.c
 +++ b/ircd/gline.c
-@@ -209,7 +209,7 @@ make_gline(char *nick, char *user, char *host, char *reason, time_t expire, time
+@@ -201,6 +201,29 @@ make_gline(char *nick, char *user, char *host, char *reason, time_t expire, time
+   return gline;
+ }
+ 
++/** G-line for current user.
++ * If the G-line is inactive, return immediately.
++ * Otherwise, if any users match it, disconnect them.
++ * @param[in] cptr Peer connect that sent the G-line.
++ * @param[in] sptr Client that originated the G-line.
++ * @param[in] gline G-line to check.
++ * @return Zero, unless \a sptr G-lined himself, in which case CPTR_KILLED.
++ */
++int
++do_user_gline(struct Client *cptr, struct Client *sptr, struct Gline *gline)
++{
++    /* ok, here's one that got G-lined */
++    send_reply(sptr, SND_EXPLICIT | ERR_YOUREBANNEDCREEP, ":%s",
++        	   gline->gl_reason);
++
++    /* let the ops know about it */
++    sendto_opmask_butone(0, SNO_GLINE, "G-line active for %s",
++                             get_client_name(sptr, SHOW_IP));
++							 
++    /* Exits victim */
++    return exit_client_msg(cptr, sptr, &me, "G-lined (%s)", gline->gl_reason);
++}
++
+ /** Check local clients against a new G-line.
+  * If the G-line is inactive, return immediately.
+  * Otherwise, if any users match it, disconnect them or kick them if the G-line is a BADCHAN.
+@@ -209,7 +232,7 @@ make_gline(char *nick, char *user, char *host, char *reason, time_t expire, time
   * @param[in] gline New G-line to check.
   * @return Zero, unless \a sptr G-lined himself, in which case CPTR_KILLED.
   */
@@ -157,7 +210,7 @@ index b68225d..0430f86 100644
  do_gline(struct Client *cptr, struct Client *sptr, struct Gline *gline)
  {
    struct Client *acptr;
-@@ -260,13 +260,14 @@ do_gline(struct Client *cptr, struct Client *sptr, struct Gline *gline)
+@@ -260,28 +283,20 @@ do_gline(struct Client *cptr, struct Client *sptr, struct Gline *gline)
            if (cli_user(acptr)->username &&
                match(gline->gl_user, (cli_user(acptr))->realusername) != 0)
              continue;
@@ -174,7 +227,25 @@ index b68225d..0430f86 100644
                continue;
            }
          }
-@@ -418,7 +419,7 @@ gline_add(struct Client *cptr, struct Client *sptr, char *userhost,
+-
+-        /* ok, here's one that got G-lined */
+-        send_reply(acptr, SND_EXPLICIT | ERR_YOUREBANNEDCREEP, ":%s",
+-        	   gline->gl_reason);
+-
+-        /* let the ops know about it */
+-        sendto_opmask_butone(0, SNO_GLINE, "G-line active for %s",
+-                             get_client_name(acptr, SHOW_IP));
+-
+-        /* and get rid of him */
+-        if ((tval = exit_client_msg(cptr, acptr, &me, "G-lined (%s)", gline->gl_reason))) 
+-        retval = tval; /* retain killed status */
++        
++		/* Modified to user gline */
++        retval = do_user_gline(cptr, acptr, gline);
+       }
+     }
+   }
+@@ -418,7 +433,7 @@ gline_add(struct Client *cptr, struct Client *sptr, char *userhost,
  {
    struct Gline *agline;
    char uhmask[NICKLEN + USERLEN + HOSTLEN + 3];
@@ -183,8 +254,51 @@ index b68225d..0430f86 100644
    int tmp;
  
    assert(0 != userhost);
+diff --git a/ircd/m_account.c b/ircd/m_account.c
+index 9ceae55..780ea99 100644
+--- a/ircd/m_account.c
++++ b/ircd/m_account.c
+@@ -81,13 +81,16 @@
+ #include "config.h"
+ 
+ #include "client.h"
++#include "gline.h"
+ #include "ircd.h"
+ #include "ircd_log.h"
+ #include "ircd_reply.h"
+ #include "ircd_string.h"
+ #include "msg.h"
++#include "numeric.h"
+ #include "numnicks.h"
+ #include "s_debug.h"
++#include "s_misc.h"
+ #include "s_user.h"
+ #include "send.h"
+ 
+@@ -108,6 +111,7 @@ int ms_account(struct Client* cptr, struct Client* sptr, int parc,
+ 	       char* parv[])
+ {
+   struct Client *acptr;
++  struct Gline *gline;
+ 
+   if (parc < 3)
+     return need_more_params(sptr, "ACCOUNT");
+@@ -159,8 +163,11 @@ int ms_account(struct Client* cptr, struct Client* sptr, int parc,
+   }
+ 
+   ircd_strncpy(cli_user(acptr)->account, parv[2], ACCOUNTLEN);
+-  hide_hostmask(acptr, FLAG_ACCOUNT);
+-
++    hide_hostmask(acptr, FLAG_ACCOUNT);
++	/* G-Line fix for account hosts */
++    if ((gline = gline_find(cli_user(acptr)->host, GLINE_ANY | GLINE_EXACT)) != 0) {
++	   return do_user_gline(cptr, acptr, gline);
++    }
+    if (cli_user(acptr)->acc_id) {
+      sendcmdto_serv_butone(sptr, CMD_ACCOUNT, cptr, "%C %s %Tu %lu",
+                            acptr, cli_user(acptr)->account,
 diff --git a/ircd/m_sethost.c b/ircd/m_sethost.c
-index f95bc31..68dc3af 100644
+index f95bc31..907e875 100644
 --- a/ircd/m_sethost.c
 +++ b/ircd/m_sethost.c
 @@ -82,6 +82,7 @@
@@ -229,108 +343,17 @@ index f95bc31..68dc3af 100644
    send_reply(target, RPL_HOSTHIDDEN, hostmask);
  
    /*
-@@ -251,5 +253,11 @@ int ms_sethost(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
+@@ -251,5 +253,10 @@ int ms_sethost(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
    }
  
    send_umode_out(target, target, &setflags, 0);
 +  
 +  /* G-Line fix for setted hosts */
 +  if ((gline = gline_find(parv[3], GLINE_ANY | GLINE_EXACT)) != 0) {
-+	 do_gline(cptr, sptr, gline);
-+	 return 0;
++	 return do_gline(cptr, sptr, gline);
 +  }
    return 0;
  }
-diff --git a/ircd/parse.c b/ircd/parse.c
-index dd56879..06d1596 100644
---- a/ircd/parse.c
-+++ b/ircd/parse.c
-@@ -281,6 +281,13 @@ struct Message msgtab[] = {
-     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
-     { m_user, m_registered, m_ignore, m_registered, m_ignore }
-   },
-+  {
-+    MSG_WEBIRC,
-+    TOK_WEBIRC,
-+    0, MAXPARA, MFLG_SLOW, 0, NULL,
-+    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
-+    { m_webirc, m_registered, m_ignore, m_registered, m_ignore }
-+  },
-   {
-     MSG_AWAY,
-     TOK_AWAY,
-diff --git a/ircd/s_auth.c b/ircd/s_auth.c
-index bfd58c0..c1db48a 100644
---- a/ircd/s_auth.c
-+++ b/ircd/s_auth.c
-@@ -201,6 +201,8 @@ struct IAuth {
- 
- /** Active instance of IAuth. */
- static struct IAuth *iauth;
-+/** IAuth respawn timer. */
-+static struct Timer iauth_spawn_timer;
- /** Freelist of AuthRequest structures. */
- static struct AuthRequest *auth_freelist;
- 
-@@ -1014,6 +1016,23 @@ int auth_set_pong(struct AuthRequest *auth, unsigned int cookie)
-   return check_auth_finished(auth);
- }
- 
-+int auth_set_webirc(struct AuthRequest *auth, const char *password, const char *username, const char *hostname, struct irc_in_addr *ip)
-+{
-+  struct Client *cptr;
-+
-+  assert(auth != NULL);
-+
-+  cptr = auth->client;
-+
-+  if (!FlagHas(&auth->flags, AR_NEEDS_NICK) || !FlagHas(&auth->flags, AR_NEEDS_USER))
-+    return exit_client(cptr, cptr, &me, "WEBIRC must not be used after USER or NICK");
-+
-+  if (IAuthHas(iauth, IAUTH_UNDERNET))
-+    sendto_iauth(cptr, "W %s %s %s %s", password, username, hostname, ircd_ntoa(ip));
-+
-+  return 0;
-+}
-+
- /** Record a user's claimed username and userinfo.
-  * @param[in] auth Authorization request for client.
-  * @param[in] username Client's asserted username.
-@@ -2063,6 +2082,18 @@ static void iauth_read(struct IAuth *iauth)
-   memcpy(iauth->i_buffer, sol, iauth->i_count);
- }
- 
-+static void iauth_spawn_callback(struct Event *ev)
-+{
-+  struct IAuth *iauth;
-+
-+  assert(0 != ev_timer(ev));
-+  assert(0 != t_data(ev_timer(ev)));
-+
-+  iauth = (struct IAuth*) t_data(ev_timer(ev));
-+
-+  iauth_do_spawn(iauth, 1);
-+}
-+
- /** Handle socket activity for an %IAuth connection.
-  * @param[in] ev &Socket event; the IAuth connection is the user data
-  *   pointer for the socket.
-@@ -2078,8 +2109,13 @@ static void iauth_sock_callback(struct Event *ev)
-   switch (ev_type(ev)) {
-   case ET_DESTROY:
-     /* Hm, what happened here? */
--    if (!IAuthHas(iauth, IAUTH_CLOSING))
--      iauth_do_spawn(iauth, 1);
-+    if (!IAuthHas(iauth, IAUTH_CLOSING)) {
-+      /* We must not respawn the IAuth instance right here because this callback
-+       * function may have been called by iauth_disconnect() - which would garble our
-+       * IAuth sockets once we return from this function. */
-+      timer_add(timer_init(&iauth_spawn_timer), iauth_spawn_callback, (void *)iauth,
-+        TT_RELATIVE, 1);
-+    }
-     break;
-   case ET_READ:
-     iauth_read(iauth);
 diff --git a/ircd/m_webirc.c b/ircd/m_webirc.c
 new file mode 100644
 index 0000000..3bd5c1c
@@ -462,3 +485,160 @@ index 0000000..3bd5c1c
 +
 +  return auth_set_webirc(cli_auth(cptr), parv[1], parv[2], parv[3], &ip);
 +}
+diff --git a/ircd/parse.c b/ircd/parse.c
+index dd56879..06d1596 100644
+--- a/ircd/parse.c
++++ b/ircd/parse.c
+@@ -281,6 +281,13 @@ struct Message msgtab[] = {
+     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
+     { m_user, m_registered, m_ignore, m_registered, m_ignore }
+   },
++  {
++    MSG_WEBIRC,
++    TOK_WEBIRC,
++    0, MAXPARA, MFLG_SLOW, 0, NULL,
++    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
++    { m_webirc, m_registered, m_ignore, m_registered, m_ignore }
++  },
+   {
+     MSG_AWAY,
+     TOK_AWAY,
+diff --git a/ircd/s_auth.c b/ircd/s_auth.c
+index bfd58c0..c1db48a 100644
+--- a/ircd/s_auth.c
++++ b/ircd/s_auth.c
+@@ -201,6 +201,8 @@ struct IAuth {
+ 
+ /** Active instance of IAuth. */
+ static struct IAuth *iauth;
++/** IAuth respawn timer. */
++static struct Timer iauth_spawn_timer;
+ /** Freelist of AuthRequest structures. */
+ static struct AuthRequest *auth_freelist;
+ 
+@@ -1014,6 +1016,23 @@ int auth_set_pong(struct AuthRequest *auth, unsigned int cookie)
+   return check_auth_finished(auth);
+ }
+ 
++int auth_set_webirc(struct AuthRequest *auth, const char *password, const char *username, const char *hostname, struct irc_in_addr *ip)
++{
++  struct Client *cptr;
++
++  assert(auth != NULL);
++
++  cptr = auth->client;
++
++  if (!FlagHas(&auth->flags, AR_NEEDS_NICK) || !FlagHas(&auth->flags, AR_NEEDS_USER))
++    return exit_client(cptr, cptr, &me, "WEBIRC must not be used after USER or NICK");
++
++  if (IAuthHas(iauth, IAUTH_UNDERNET))
++    sendto_iauth(cptr, "W %s %s %s %s", password, username, hostname, ircd_ntoa(ip));
++
++  return 0;
++}
++
+ /** Record a user's claimed username and userinfo.
+  * @param[in] auth Authorization request for client.
+  * @param[in] username Client's asserted username.
+@@ -2063,6 +2082,18 @@ static void iauth_read(struct IAuth *iauth)
+   memcpy(iauth->i_buffer, sol, iauth->i_count);
+ }
+ 
++static void iauth_spawn_callback(struct Event *ev)
++{
++  struct IAuth *iauth;
++
++  assert(0 != ev_timer(ev));
++  assert(0 != t_data(ev_timer(ev)));
++
++  iauth = (struct IAuth*) t_data(ev_timer(ev));
++
++  iauth_do_spawn(iauth, 1);
++}
++
+ /** Handle socket activity for an %IAuth connection.
+  * @param[in] ev &Socket event; the IAuth connection is the user data
+  *   pointer for the socket.
+@@ -2078,8 +2109,13 @@ static void iauth_sock_callback(struct Event *ev)
+   switch (ev_type(ev)) {
+   case ET_DESTROY:
+     /* Hm, what happened here? */
+-    if (!IAuthHas(iauth, IAUTH_CLOSING))
+-      iauth_do_spawn(iauth, 1);
++    if (!IAuthHas(iauth, IAUTH_CLOSING)) {
++      /* We must not respawn the IAuth instance right here because this callback
++       * function may have been called by iauth_disconnect() - which would garble our
++       * IAuth sockets once we return from this function. */
++      timer_add(timer_init(&iauth_spawn_timer), iauth_spawn_callback, (void *)iauth,
++        TT_RELATIVE, 1);
++    }
+     break;
+   case ET_READ:
+     iauth_read(iauth);
+diff --git a/ircd/s_user.c b/ircd/s_user.c
+index 7f28f0c..d834912 100644
+--- a/ircd/s_user.c
++++ b/ircd/s_user.c
+@@ -31,6 +31,7 @@
+ #include "channel.h"
+ #include "class.h"
+ #include "client.h"
++#include "gline.h"
+ #include "hash.h"
+ #include "ircd.h"
+ #include "ircd_alloc.h"
+@@ -349,6 +350,7 @@ int register_user(struct Client *cptr, struct Client *sptr)
+   char*            tmpstr;
+   struct User*     user = cli_user(sptr);
+   char             ip_base64[25];
++  struct Gline *gline;
+ 
+   user->last = CurrentTime;
+   parv[0] = cli_name(sptr);
+@@ -460,8 +462,13 @@ int register_user(struct Client *cptr, struct Client *sptr)
+    * their hostmask here.  Calling hide_hostmask() from IAuth's
+    * account assignment causes a numeric reply during registration.
+    */
+-  if (HasHiddenHost(sptr))
++  if (HasHiddenHost(sptr)) {
+     hide_hostmask(sptr, FLAG_HIDDENHOST);
++	/* G-Line fix for account hosts */
++    if ((gline = gline_find(cli_user(sptr)->host, GLINE_ANY | GLINE_EXACT)) != 0) {
++	   return do_user_gline(cptr, sptr, gline);
++    }	
++  }
+   if (IsInvisible(sptr))
+     ++UserStats.inv_clients;
+   if (IsOper(sptr))
+@@ -953,7 +960,6 @@ int
+ hide_hostmask(struct Client *cptr, unsigned int flag)
+ {
+   struct Membership *chan;
+-
+   switch (flag) {
+   case FLAG_HIDDENHOST:
+     /* Local users cannot set +x unless FEAT_HOST_HIDING is true. */
+@@ -1233,7 +1239,7 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
+   size_t opernamelen;
+   char *opername = 0;
+   char* account = NULL;
+-
++  struct Gline *gline;
+   hostmask = password = NULL;
+   what = MODE_ADD;
+ 
+@@ -1519,8 +1525,13 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
+       }
+       ircd_strncpy(cli_user(sptr)->account, account, len);
+   }
+-  if (!FlagHas(&setflags, FLAG_HIDDENHOST) && do_host_hiding && allow_modes != ALLOWMODES_DEFAULT)
++  if (!FlagHas(&setflags, FLAG_HIDDENHOST) && do_host_hiding && allow_modes != ALLOWMODES_DEFAULT) {
+     hide_hostmask(sptr, FLAG_HIDDENHOST);
++	/* G-Line fix for account hosts */
++    if ((gline = gline_find(cli_user(sptr)->host, GLINE_ANY | GLINE_EXACT)) != 0) {
++	   return do_user_gline(cptr, sptr, gline);
++    }
++  }
+   if (do_set_host) {
+     /* We clear the flag in the old mask, so that the +h will be sent */
+     /* Only do this if we're SETTING +h and it succeeded */
