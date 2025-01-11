@@ -1,24 +1,8 @@
-commit 8da0129a0cb66e36b6d17af225eba15d3074a227
-Author: WarPigs1602 <gh@midiandmore.net>
-Date:   
+commit 4b02104183bfd6934c2808890e6d14cc7ef75ea6
+Author: Andreas Pschorn <source@midiandmore.de>
+Date:   Sat Jan 11 13:15:27 2025 +0100
 
-    Added some patches
-    
-            geändert:       configure
-            geändert:       configure.in
-            geändert:       include/gline.h
-            geändert:       include/handlers.h
-            geändert:       include/msg.h
-            geändert:       include/s_auth.h
-            geändert:       ircd/Makefile.in
-            geändert:       ircd/channel.c
-            geändert:       ircd/gline.c
-            geändert:       ircd/m_account.c
-            geändert:       ircd/m_sethost.c
-            neue Datei:     ircd/m_webirc.c
-            geändert:       ircd/parse.c
-            geändert:       ircd/s_auth.c
-            geändert:       ircd/s_user.c
+    Added G-line for authed users
 
 diff --git a/configure b/configure
 index e074b31..d803b41 100755
@@ -51,15 +35,14 @@ index 025a7b6..c47d439 100644
  AC_ARG_WITH([maxcon],
  [  --with-maxcon=maxcon    Maximum number of connections server will accept],
 diff --git a/include/gline.h b/include/gline.h
-index 502cd42..2e1f5e7 100644
+index 502cd42..689a077 100644
 --- a/include/gline.h
 +++ b/include/gline.h
-@@ -116,6 +116,8 @@ extern int gline_resend(struct Client *cptr, struct Gline *gline);
+@@ -116,6 +116,7 @@ extern int gline_resend(struct Client *cptr, struct Gline *gline);
  extern int gline_list(struct Client *sptr, char *userhost);
  extern void gline_stats(struct Client *sptr, const struct StatDesc *sd,
                          char *param);
 +extern int do_user_gline(struct Client *cptr, struct Client *sptr, struct Gline *gline);
-+extern int do_gline(struct Client *cptr, struct Client *sptr, struct Gline *gline);
  extern int gline_memory_count(size_t *gl_size);
  extern struct Gline *IsNickGlined(struct Client *cptr, char *nick);
  
@@ -107,6 +90,22 @@ index ce25827..8297840 100644
  extern int auth_set_pong(struct AuthRequest *auth, unsigned int cookie);
  extern int auth_set_user(struct AuthRequest *auth, const char *username, const char *hostname, const char *servername, const char *userinfo);
  extern int auth_set_nick(struct AuthRequest *auth, const char *nickname);
+diff --git a/include/struct.h b/include/struct.h
+index 16d9f8e..5f00e26 100644
+--- a/include/struct.h
++++ b/include/struct.h
+@@ -83,7 +83,10 @@ struct User {
+   char               host[HOSTLEN + 1];         /**< displayed hostname */
+   char               realusername[USERLEN + 1]; /**< actual username */
+   char               realhost[HOSTLEN + 1];     /**< actual hostname */
+-  char               account[ACCOUNTLEN + 1];   /**< IRC account name */
++  char               account[ACCOUNTLEN + 1];   /**< actual hostname */
++  char               authhost[ACCOUNTLEN + HOSTLEN + 2];    /**< actual hostname */
++
++  /**< IRC account name */
+   time_t	     acc_create;                /**< IRC account timestamp */
+   unsigned long       acc_id;                    /**< IRC account unique id */
+   char*              opername;                  /**< IRC Oper Account name */
 diff --git a/ircd/Makefile.in b/ircd/Makefile.in
 index 01a5ea6..430b4be 100644
 --- a/ircd/Makefile.in
@@ -168,7 +167,7 @@ index fdb3c25..1c6fcb0 100644
      /* If an exception matches, no ban can match. */
      if (banlist->flags & BAN_EXCEPTION)
 diff --git a/ircd/gline.c b/ircd/gline.c
-index b68225d..3a855ca 100644
+index b68225d..90f5fd6 100644
 --- a/ircd/gline.c
 +++ b/ircd/gline.c
 @@ -201,6 +201,29 @@ make_gline(char *nick, char *user, char *host, char *reason, time_t expire, time
@@ -201,15 +200,6 @@ index b68225d..3a855ca 100644
  /** Check local clients against a new G-line.
   * If the G-line is inactive, return immediately.
   * Otherwise, if any users match it, disconnect them or kick them if the G-line is a BADCHAN.
-@@ -209,7 +232,7 @@ make_gline(char *nick, char *user, char *host, char *reason, time_t expire, time
-  * @param[in] gline New G-line to check.
-  * @return Zero, unless \a sptr G-lined himself, in which case CPTR_KILLED.
-  */
--static int
-+int
- do_gline(struct Client *cptr, struct Client *sptr, struct Gline *gline)
- {
-   struct Client *acptr;
 @@ -260,28 +283,20 @@ do_gline(struct Client *cptr, struct Client *sptr, struct Gline *gline)
            if (cli_user(acptr)->username &&
                match(gline->gl_user, (cli_user(acptr))->realusername) != 0)
@@ -223,7 +213,7 @@ index b68225d..3a855ca 100644
            else {
 -            if (match(gline->gl_host, cli_sockhost(acptr)) != 0)
 +			/* G-Line fix for setted hosts */
-+            if (match(gline->gl_host, cli_user(acptr)->host) != 0 && match(gline->gl_host, cli_sockhost(acptr)) != 0)
++            if (match(gline->gl_host, cli_user(acptr)->host) != 0 && match(gline->gl_host, cli_sockhost(acptr)) != 0 && match(gline->gl_host, cli_user(acptr)->authhost) != 0)
                continue;
            }
          }
@@ -255,15 +245,16 @@ index b68225d..3a855ca 100644
  
    assert(0 != userhost);
 diff --git a/ircd/m_account.c b/ircd/m_account.c
-index 9ceae55..780ea99 100644
+index 9ceae55..176edf0 100644
 --- a/ircd/m_account.c
 +++ b/ircd/m_account.c
-@@ -81,13 +81,16 @@
+@@ -81,13 +81,17 @@
  #include "config.h"
  
  #include "client.h"
 +#include "gline.h"
  #include "ircd.h"
++#include "ircd_features.h"
  #include "ircd_log.h"
  #include "ircd_reply.h"
  #include "ircd_string.h"
@@ -275,7 +266,7 @@ index 9ceae55..780ea99 100644
  #include "s_user.h"
  #include "send.h"
  
-@@ -108,6 +111,7 @@ int ms_account(struct Client* cptr, struct Client* sptr, int parc,
+@@ -108,6 +112,7 @@ int ms_account(struct Client* cptr, struct Client* sptr, int parc,
  	       char* parv[])
  {
    struct Client *acptr;
@@ -283,22 +274,32 @@ index 9ceae55..780ea99 100644
  
    if (parc < 3)
      return need_more_params(sptr, "ACCOUNT");
-@@ -159,8 +163,11 @@ int ms_account(struct Client* cptr, struct Client* sptr, int parc,
+@@ -159,8 +164,7 @@ int ms_account(struct Client* cptr, struct Client* sptr, int parc,
    }
  
    ircd_strncpy(cli_user(acptr)->account, parv[2], ACCOUNTLEN);
 -  hide_hostmask(acptr, FLAG_ACCOUNT);
 -
 +    hide_hostmask(acptr, FLAG_ACCOUNT);
-+	/* G-Line fix for account hosts */
-+    if ((gline = gline_find(cli_user(acptr)->host, GLINE_ANY | GLINE_EXACT)) != 0) {
-+	   return do_user_gline(cptr, acptr, gline);
-+    }
     if (cli_user(acptr)->acc_id) {
       sendcmdto_serv_butone(sptr, CMD_ACCOUNT, cptr, "%C %s %Tu %lu",
                             acptr, cli_user(acptr)->account,
+@@ -174,6 +178,12 @@ int ms_account(struct Client* cptr, struct Client* sptr, int parc,
+      sendcmdto_serv_butone(sptr, CMD_ACCOUNT, cptr, "%C %s",
+                            acptr, cli_user(acptr)->account);
+    }
+-
++  /* G-Line fix for accounts */
++  strcpy(cli_user(acptr)->authhost, parv[2]);
++  strcat(cli_user(acptr)->authhost, ".");
++  strcat(cli_user(acptr)->authhost, feature_str(FEAT_HIDDEN_HOST));	
++  if ((gline = gline_find(cli_user(acptr)->authhost, GLINE_ANY | GLINE_EXACT)) != 0) {
++	  do_user_gline(cptr, acptr, gline);
++  }
+   return 0;
+ }
 diff --git a/ircd/m_sethost.c b/ircd/m_sethost.c
-index f95bc31..907e875 100644
+index f95bc31..d0aa3a5 100644
 --- a/ircd/m_sethost.c
 +++ b/ircd/m_sethost.c
 @@ -82,6 +82,7 @@
@@ -350,7 +351,7 @@ index f95bc31..907e875 100644
 +  
 +  /* G-Line fix for setted hosts */
 +  if ((gline = gline_find(parv[3], GLINE_ANY | GLINE_EXACT)) != 0) {
-+	 return do_gline(cptr, sptr, gline);
++	 return do_user_gline(cptr, target, gline);
 +  }
    return 0;
  }
@@ -576,41 +577,21 @@ index bfd58c0..c1db48a 100644
    case ET_READ:
      iauth_read(iauth);
 diff --git a/ircd/s_user.c b/ircd/s_user.c
-index 7f28f0c..d834912 100644
+index 7f28f0c..bad1a40 100644
 --- a/ircd/s_user.c
 +++ b/ircd/s_user.c
-@@ -31,6 +31,7 @@
- #include "channel.h"
- #include "class.h"
- #include "client.h"
-+#include "gline.h"
- #include "hash.h"
- #include "ircd.h"
- #include "ircd_alloc.h"
-@@ -349,6 +350,7 @@ int register_user(struct Client *cptr, struct Client *sptr)
-   char*            tmpstr;
-   struct User*     user = cli_user(sptr);
-   char             ip_base64[25];
-+  struct Gline *gline;
- 
-   user->last = CurrentTime;
-   parv[0] = cli_name(sptr);
-@@ -460,8 +462,13 @@ int register_user(struct Client *cptr, struct Client *sptr)
+@@ -460,8 +460,9 @@ int register_user(struct Client *cptr, struct Client *sptr)
     * their hostmask here.  Calling hide_hostmask() from IAuth's
     * account assignment causes a numeric reply during registration.
     */
 -  if (HasHiddenHost(sptr))
 +  if (HasHiddenHost(sptr)) {
      hide_hostmask(sptr, FLAG_HIDDENHOST);
-+	/* G-Line fix for account hosts */
-+    if ((gline = gline_find(cli_user(sptr)->host, GLINE_ANY | GLINE_EXACT)) != 0) {
-+	   return do_user_gline(cptr, sptr, gline);
-+    }	
 +  }
    if (IsInvisible(sptr))
      ++UserStats.inv_clients;
    if (IsOper(sptr))
-@@ -953,7 +960,6 @@ int
+@@ -953,7 +954,6 @@ int
  hide_hostmask(struct Client *cptr, unsigned int flag)
  {
    struct Membership *chan;
@@ -618,26 +599,21 @@ index 7f28f0c..d834912 100644
    switch (flag) {
    case FLAG_HIDDENHOST:
      /* Local users cannot set +x unless FEAT_HOST_HIDING is true. */
-@@ -1233,7 +1239,7 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
+@@ -1233,7 +1233,6 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
    size_t opernamelen;
    char *opername = 0;
    char* account = NULL;
 -
-+  struct Gline *gline;
    hostmask = password = NULL;
    what = MODE_ADD;
  
-@@ -1519,8 +1525,13 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
+@@ -1519,8 +1518,9 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
        }
        ircd_strncpy(cli_user(sptr)->account, account, len);
    }
 -  if (!FlagHas(&setflags, FLAG_HIDDENHOST) && do_host_hiding && allow_modes != ALLOWMODES_DEFAULT)
 +  if (!FlagHas(&setflags, FLAG_HIDDENHOST) && do_host_hiding && allow_modes != ALLOWMODES_DEFAULT) {
      hide_hostmask(sptr, FLAG_HIDDENHOST);
-+	/* G-Line fix for account hosts */
-+    if ((gline = gline_find(cli_user(sptr)->host, GLINE_ANY | GLINE_EXACT)) != 0) {
-+	   return do_user_gline(cptr, sptr, gline);
-+    }
 +  }
    if (do_set_host) {
      /* We clear the flag in the old mask, so that the +h will be sent */
