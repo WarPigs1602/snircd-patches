@@ -20989,7 +20989,7 @@ index 54a442e..a247aaf 100644
  	  else
  	  {
 diff --git a/ircd/m_cap.c b/ircd/m_cap.c
-index edf60fe..2cc0159 100644
+index edf60fe..1709cfd 100644
 --- a/ircd/m_cap.c
 +++ b/ircd/m_cap.c
 @@ -21,7 +21,7 @@
@@ -21001,9 +21001,12 @@ index edf60fe..2cc0159 100644
   */
  
  #include "config.h"
-@@ -47,12 +47,13 @@ typedef int (*bqcmp)(const void *, const void *);
+@@ -45,14 +45,15 @@
+ typedef int (*bqcmp)(const void *, const void *);
+ 
  static struct capabilities {
-   enum Capab cap;
+-  enum Capab cap;
++  enum CapabBits cap;
    char *capstr;
 +  unsigned int config;
    unsigned long flags;
@@ -21013,11 +21016,11 @@ index edf60fe..2cc0159 100644
 -#define _CAP(cap, flags, name)						      \
 -	{ CAP_ ## cap, #cap, (flags), (name), sizeof(name) - 1 }
 +#define _CAP(cap, config, flags, name)      \
-+	{ E_CAP_ ## cap, #cap, (config), (flags), (name), sizeof(name) - 1 }
++	{ CAP_ ## cap, #cap, (config), (flags), (name), sizeof(name) - 1 }
    CAPLIST
  #undef _CAP
  };
-@@ -137,18 +138,23 @@ find_cap(const char **caplist_p, int *neg_p)
+@@ -137,18 +138,27 @@ find_cap(const char **caplist_p, int *neg_p)
   * @param[in] subcmd Name of capability subcommand.
   */
  static int
@@ -21037,6 +21040,10 @@ index edf60fe..2cc0159 100644
    for (i = 0, loc = 0; i < CAPAB_LIST_LEN; i++) {
      flags = capab_list[i].flags;
 +
++    /* If the client has no capabilities set, and this is the LIST subcmd, break. */
++    if (!set && !strcmp(subcmd, "LIST"))
++      break;
++
 +    /* Check if the capability is enabled in features() */
 +    if (!feature_bool(capab_list[i].config))
 +      continue;
@@ -21044,7 +21051,7 @@ index edf60fe..2cc0159 100644
      /* This is a little bit subtle, but just involves applying de
       * Morgan's laws to the obvious check: We must display the
       * capability if (and only if) it is set in \a rem or \a set, or
-@@ -175,7 +181,7 @@ send_caplist(struct Client *sptr, const struct CapSet *set,
+@@ -175,7 +185,7 @@ send_caplist(struct Client *sptr, const struct CapSet *set,
  
      len = capab_list[i].namelen + pfx_len; /* how much we'd add... */
      if (msgq_bufleft(mb) < loc + len + 2) { /* would add too much; must flush */
@@ -21053,7 +21060,7 @@ index edf60fe..2cc0159 100644
        capbuf[(loc = 0)] = '\0'; /* re-terminate the buffer... */
      }
  
-@@ -193,7 +199,7 @@ send_caplist(struct Client *sptr, const struct CapSet *set,
+@@ -193,7 +203,7 @@ send_caplist(struct Client *sptr, const struct CapSet *set,
  static int
  cap_ls(struct Client *sptr, const char *caplist)
  {
@@ -21062,7 +21069,7 @@ index edf60fe..2cc0159 100644
      auth_cap_start(cli_auth(sptr));
    return send_caplist(sptr, 0, 0, "LS"); /* send list of capabilities */
  }
-@@ -203,43 +209,44 @@ cap_req(struct Client *sptr, const char *caplist)
+@@ -203,43 +213,42 @@ cap_req(struct Client *sptr, const char *caplist)
  {
    const char *cl = caplist;
    struct capabilities *cap;
@@ -21078,8 +21085,8 @@ index edf60fe..2cc0159 100644
 +  if (IsUserPort(sptr)) /* registration hasn't completed; suspend it... */
      auth_cap_start(cli_auth(sptr));
  
-   memset(&set, 0, sizeof(set));
-   memset(&rem, 0, sizeof(rem));
+-  memset(&set, 0, sizeof(set));
+-  memset(&rem, 0, sizeof(rem));
    while (cl) { /* walk through the capabilities list... */
      if (!(cap = find_cap(&cl, &neg)) /* look up capability... */
 -	|| (!neg && (cap->flags & CAPFL_PROHIBIT)) /* is it prohibited? */
@@ -21124,7 +21131,7 @@ index edf60fe..2cc0159 100644
  
    return 0;
  }
-@@ -260,10 +267,15 @@ cap_ack(struct Client *sptr, const char *caplist)
+@@ -260,10 +269,15 @@ cap_ack(struct Client *sptr, const char *caplist)
  	(neg ? HasCap(sptr, cap->cap) : !HasCap(sptr, cap->cap))) /* uh... */
        continue;
  
@@ -21142,7 +21149,7 @@ index edf60fe..2cc0159 100644
    }
  
    return 0;
-@@ -272,24 +284,23 @@ cap_ack(struct Client *sptr, const char *caplist)
+@@ -272,24 +286,23 @@ cap_ack(struct Client *sptr, const char *caplist)
  static int
  cap_clear(struct Client *sptr, const char *caplist)
  {
@@ -21170,7 +21177,7 @@ index edf60fe..2cc0159 100644
  
    return 0;
  }
-@@ -297,7 +308,7 @@ cap_clear(struct Client *sptr, const char *caplist)
+@@ -297,7 +310,7 @@ cap_clear(struct Client *sptr, const char *caplist)
  static int
  cap_end(struct Client *sptr, const char *caplist)
  {
@@ -21424,10 +21431,10 @@ index 0f6922b..b64c738 100644
 -
 diff --git a/ircd/m_sasl.c b/ircd/m_sasl.c
 new file mode 100644
-index 0000000..8fefecc
+index 0000000..d917d2f
 --- /dev/null
 +++ b/ircd/m_sasl.c
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,117 @@
 +/*
 + * IRC - Internet Relay Chat, ircd/m_sasl.c
 + * Copyright (C) 2002 Alex Badea <vampire@p16.pub.ro>
@@ -21542,11 +21549,7 @@ index 0000000..8fefecc
 +{		
 +  if (parc < 2 || *parv[1] == '\0')
 +    return need_more_params(sptr, "AUTHENTICATE");	
-+  if(CapHas(cli_active(sptr), CAP_SASL)) {
-+	 send_reply(sptr, ERR_SASLFAIL); 
-+  } else {
-+     register_sasl(cptr, sptr, parc, parv);
-+  }
++  register_sasl(cptr, sptr, parc, parv);
 +  return 0;
 +}
 \ No newline at end of file
@@ -21889,7 +21892,7 @@ index dd56879..fb75286 100644
  };
  
 diff --git a/ircd/s_auth.c b/ircd/s_auth.c
-index bfd58c0..f30fc3d 100644
+index bfd58c0..c7551be 100644
 --- a/ircd/s_auth.c
 +++ b/ircd/s_auth.c
 @@ -38,6 +38,7 @@
@@ -21967,7 +21970,146 @@ index bfd58c0..f30fc3d 100644
  /** Set username for user associated with \a auth.
   * @param[in] auth Client authorization request to work on.
   * @return Zero if client is kept, CPTR_KILLED if client rejected.
-@@ -373,9 +405,20 @@ static int check_auth_finished(struct AuthRequest *auth)
+@@ -221,58 +253,30 @@ static int auth_set_username(struct AuthRequest *auth)
+   struct User   *user = cli_user(sptr);
+   char *d;
+   char *s;
+-  int   rlen = USERLEN;
+-  int   killreason;
+-  short character = 0;
+-  short pos = 0;
++  short upper = 0;
++  short lower = 0;
++  short leadcaps = 0;
+   short other = 0;
+   short digits = 0;
++  short digitgroups = 0;
+   char  ch;
+   char  last;
+ 
+-  if (FlagHas(&auth->flags, AR_IAUTH_USERNAME))
++  if (FlagHas(&auth->flags, AR_IAUTH_FUSERNAME))
+   {
+-      ircd_strncpy(cli_user(sptr)->username, cli_username(sptr), USERLEN);
++    ircd_strncpy(user->username, cli_username(sptr), USERLEN);
+   }
+-  else
++  else if (IsIdented(sptr))
+   {
+-    /* Copy username from source to destination.  Since they may be the
+-     * same, and we may prefix with a '~', use a buffer character (ch)
+-     * to hold the next character to copy.
+-     */
+-    s = IsIdented(sptr) ? cli_username(sptr) : user->username;
+-    last = *s++;
+-    d = user->username;
+-    if (HasFlag(sptr, FLAG_DOID) && !IsIdented(sptr))
+-    {
+-      *d++ = '~';
+-      --rlen;
+-    }
+-    while (last && !IsCntrl(last) && rlen--)
+-    {
+-      ch = *s++;
+-      *d++ = IsUserChar(last) ? last : '_';
+-      last = (ch != '~') ? ch : '_';
+-    }
+-    *d = 0;
++     s = IsIdented(sptr) ? cli_username(sptr) : user->username;
+   }
++  /* else username was set by identd lookup (or failure thereof) */
+ 
+   /* If username is empty or just ~, reject. */
+   if ((user->username[0] == '\0')
+       || ((user->username[0] == '~') && (user->username[1] == '\0')))
+     return exit_client(sptr, sptr, &me, "USER: Bogus userid.");
+ 
+-  /* Have to set up "realusername" before doing the gline check below */
+-  ircd_strncpy(user->realusername, user->username, USERLEN);
+-
+-  /* Check for K- or G-line. */
+-  killreason = find_kill(sptr, 1);
+-  if (killreason) {
+-    ServerStats->is_ref++;
+-    return exit_client(sptr, sptr, &me,
+-                       (killreason == -1 ? "K-lined" : "G-lined"));
+-  }
+-
+   if (!FlagHas(&auth->flags, AR_IAUTH_FUSERNAME))
+   {
+     /* Check for mixed case usernames, meaning probably hacked.  Jon2 3-94
+@@ -281,21 +285,32 @@ static int auth_set_username(struct AuthRequest *auth)
+     s = d = user->username + (user->username[0] == '~');
+     for (last = '\0';
+          (ch = *d++) != '\0';
+-         pos++, last = ch)
++         last = ch)
+     {
+-      if (IsLower(ch) || IsUpper(ch))
++      if (IsLower(ch))
+       {
+-        character++;
++        lower++;
++      }
++      else if (IsUpper(ch))
++      {
++        upper++;
++        /* Accept caps as leading if we haven't seen lower case or digits yet. */
++        if ((leadcaps || last == '\0') && !lower && !digits)
++          leadcaps++;
+       }
+       else if (IsDigit(ch))
+       {
+         digits++;
++        if (!IsDigit(last))
++        {
++          digitgroups++;
++        }
+       }
+       else if (ch == '-' || ch == '_' || ch == '.')
+       {
+         other++;
+         /* If -_. exist at start, consecutively, or more than twice, reject. */
+-        if (pos == 0 || last == '-' || last == '_' || last == '.' || other > 2)
++        if (last == '\0' || last == '-' || last == '_' || last == '.' || other > 2)
+           goto badid;
+       }
+       else /* All other punctuation is rejected. */
+@@ -303,7 +318,23 @@ static int auth_set_username(struct AuthRequest *auth)
+     }
+ 
+     /* Must have at least one letter. */
+-    if (!character)
++    if (!lower && !upper)
++      goto badid;
++
++    /* If more than two groups of digits, reject. */
++    if (digitgroups > 2)
++      goto badid;
++    /* If mixed case, first must be capital, but no more than three;
++     * but if three capitals, they must all be leading. */
++    if (lower && upper && (!leadcaps || leadcaps > 3 ||
++                           (upper > 2 && upper > leadcaps)))
++      goto badid;
++    /* If two different groups of digits, one must be either at the
++     * start or end. */
++    if (digitgroups == 2 && !(IsDigit(s[0]) || IsDigit(ch)))
++      goto badid;
++    /* Final character must not be punctuation. */
++    if (!IsAlnum(last))
+       goto badid;
+   }
+ 
+@@ -315,7 +346,7 @@ badid:
+   if (IsIdented(sptr) && !strcmp(cli_username(sptr), user->username))
+     return 0;
+ 
+-  ServerStats->is_ref++;
++  ++ServerStats->is_ref;
+   send_reply(sptr, SND_EXPLICIT | ERR_INVALIDUSERNAME,
+              ":Your username is invalid.");
+   send_reply(sptr, SND_EXPLICIT | ERR_INVALIDUSERNAME,
+@@ -373,9 +404,20 @@ static int check_auth_finished(struct AuthRequest *auth)
        send_reply(auth->client, ERR_PASSWDMISMATCH);
        return exit_client(auth->client, auth->client, &me, "Bad Password");
      }
@@ -21989,7 +22131,7 @@ index bfd58c0..f30fc3d 100644
    /* Check if iauth is done. */
    if (FlagHas(&auth->flags, AR_IAUTH_PENDING))
    {
-@@ -705,6 +748,15 @@ void destroy_auth_request(struct AuthRequest* auth)
+@@ -705,6 +747,18 @@ void destroy_auth_request(struct AuthRequest* auth)
    auth_freelist = auth;
  }
  
@@ -21998,14 +22140,17 @@ index bfd58c0..f30fc3d 100644
 +int auth_set_sasl(struct AuthRequest *auth, const char *crypt)
 +{
 +  assert(auth != NULL);
-+  sendto_iauth(auth->client, "Y %s", crypt);
-+  return 0;
++  if(CapHas(cli_active(auth->client), CAP_SASL)) {
++	 sendto_iauth(auth->client, "Y %s", crypt);
++	 return check_auth_finished(auth);
++  } else
++	  return 0;
 +}
 +
  /** Handle a 'ping' (authorization) timeout for a client.
   * @param[in] cptr The client whose session authorization has timed out.
   * @return Zero if client is kept, CPTR_KILLED if client rejected.
-@@ -1382,10 +1434,7 @@ static int sendto_iauth(struct Client *cptr, const char *format, ...)
+@@ -1382,10 +1436,7 @@ static int sendto_iauth(struct Client *cptr, const char *format, ...)
    /* Build the message buffer. */
    vd.vd_format = format;
    va_start(vd.vd_args, format);
@@ -22017,7 +22162,7 @@ index bfd58c0..f30fc3d 100644
    va_end(vd.vd_args);
  
    /* Tack it onto the iauth sendq and try to write it. */
-@@ -1882,6 +1931,52 @@ static int iauth_cmd_kill(struct IAuth *iauth, struct Client *cli,
+@@ -1882,6 +1933,52 @@ static int iauth_cmd_kill(struct IAuth *iauth, struct Client *cli,
    return 0;
  }
  
@@ -22070,7 +22215,7 @@ index bfd58c0..f30fc3d 100644
  /** Change a client's usermode.
   * @param[in] iauth Active IAuth session.
   * @param[in] cli Client referenced by command.
-@@ -1940,6 +2035,7 @@ static void iauth_parse(struct IAuth *iauth, char *message)
+@@ -1940,6 +2037,7 @@ static void iauth_parse(struct IAuth *iauth, char *message)
    case 'A': handler = iauth_cmd_config; has_cli = 0; break;
    case 's': handler = iauth_cmd_newstats; has_cli = 0; break;
    case 'S': handler = iauth_cmd_stats; has_cli = 0; break;
