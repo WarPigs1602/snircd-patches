@@ -18920,7 +18920,7 @@ index 025a7b6..c879db9 100644
 -"])
 +"
 diff --git a/doc/example.conf b/doc/example.conf
-index 5e20dcb..4f48afd 100644
+index 5e20dcb..3a3bae8 100644
 --- a/doc/example.conf
 +++ b/doc/example.conf
 @@ -60,6 +60,8 @@
@@ -19228,7 +19228,7 @@ index 5e20dcb..4f48afd 100644
  #
  # All privileges are shown with their default values; if you wish to
  # override defaults, you should set only those privileges for the
-@@ -662,15 +740,27 @@ Operator {
+@@ -662,15 +740,23 @@ Operator {
  # IANA says we should use port 194, but that requires us to run as root,
  # so we don't do that.
  #
@@ -19246,17 +19246,13 @@ index 5e20dcb..4f48afd 100644
  #  hidden = yes;
 +#  # Setting to yes makes the port a TLS-only port.
 +#  tls = yes;
-+#  # Setting to yes makes this for webirc clients only.
-+#  # If the head-in-sand (HIS) webirc features are on, you probably
-+#  # want WebIRC ports to also be hidden.
-+#  WebIRC = yes;
 +#  # Setting tls ciphers affects which TLS cipher suites are allowed on
 +#  # this port.  See TLS_CIPHERS in readme.features for more details.
 +#  tls ciphers = "";
  # };
  #
  # The port and vhost lines allow you to specify one or both of "ipv4"
-@@ -712,13 +802,23 @@ Port {
+@@ -712,13 +798,23 @@ Port {
   port = 6666;
  };
  
@@ -19281,30 +19277,27 @@ index 5e20dcb..4f48afd 100644
  # Quarantine blocks disallow operators from using OPMODE and CLEARMODE
  # on certain channels.  Opers with the force_opmode (for local
  # channels, force_local_opmode) privilege may override the quarantine
-@@ -751,6 +851,22 @@ Pseudo "LOGIN" {
- #  program = "../path/to/iauth" "-n" "options go here";
- # };
+@@ -734,15 +830,15 @@ Quarantine {
+ # is the service name, used for error messages.  More than one nick
+ # entry can be provided; the last one listed has highest priority.
+ Pseudo "CHANSERV" {
+- name = "X";
+- nick = "X@channels.undernet.org";
++ name = "A";
++ nick = "A@jserv.midiandmore.net";
+ };
  
-+# Clients who connect to a WebIRC port, match a WebIRC block and send
-+# "WEBIRC <password> <username> <hostname> <ip>" during registration
-+# can spoof their username, hostname and IP address.
-+#
-+# A rehash will disconnect clients using a WebIRC block that was
-+# removed.  A WebIRC block is considered removed if there is no block
-+# in the new config with the same IP and password -- if only the
-+# description changes, the new description is shown in /whois even for
-+# clients who were connected before the rehash.
-+WebIRC {
-+ ip = "1.2.3.4";  # may be a netmask, e.g. 1.2.3.4/28
-+ password = "webirc-secret";
-+ description = "some webirc client";
-+ hidden = yes; # hides IP in /stats webirc
-+};
-+
- # [features]
- # IRC servers have a large number of options and features.  Most of these
- # are set at compile time through the use of #define's--see "make config"
-@@ -775,6 +891,7 @@ features
+ # You can also prepend text before the user's message.
+ Pseudo "LOGIN" {
+- name = "X";
++ name = "A";
+  prepend = "LOGIN ";
+- nick = "X@channels.undernet.org";
++ nick = "A@jserv.midiandmore.net";
+ };
+ 
+ # You can ask a separate server whether to allow users to connect.
+@@ -775,6 +871,7 @@ features
  # explanation of how they work, see doc/readme.log.
   "LOG" = "SYSTEM" "FILE" "ircd.log";
   "LOG" = "SYSTEM" "LEVEL" "CRIT";
@@ -19312,20 +19305,7 @@ index 5e20dcb..4f48afd 100644
  #  "DOMAINNAME"="<obtained from /etc/resolv.conf by ./configure>";
  #  "RELIABLE_CLOCK"="FALSE";
  #  "BUFFERPOOL"="27000000";
-@@ -861,10 +978,12 @@ features
- #  "HIS_STATS_U" = "TRUE";
- #  "HIS_STATS_v" = "TRUE";
- #  "HIS_STATS_w" = "TRUE";
-+#  "HIS_STATS_W" = "TRUE";
- #  "HIS_STATS_x" = "TRUE";
- #  "HIS_STATS_y" = "TRUE";
- #  "HIS_STATS_z" = "TRUE";
- #  "HIS_STATS_IAUTH" = "TRUE";
-+#  "HIS_WEBIRC" = "TRUE";
- #  "HIS_WHOIS_SERVERNAME" = "TRUE";
- #  "HIS_WHOIS_IDLETIME" = "TRUE";
- #  "HIS_WHOIS_LOCALCHAN" = "TRUE";
-@@ -880,6 +999,15 @@ features
+@@ -880,6 +977,15 @@ features
  #  "HIS_SERVERINFO" = "The Undernet Underworld";
  #  "HIS_URLSERVERS" = "http://www.undernet.org/servers.php";
  #  "URLREG" = "http://cservice.undernet.org/live/";
@@ -19890,6 +19870,17 @@ index f0ebe3c..ad81852 100644
  /*
   * Constants
   */
+diff --git a/include/msgq.h b/include/msgq.h
+index 199cfb2..82fcf2a 100644
+--- a/include/msgq.h
++++ b/include/msgq.h
+@@ -86,5 +86,6 @@ extern void msgq_count_memory(struct Client *cptr,
+ extern void msgq_histogram(struct Client *cptr, const struct StatDesc *sd,
+                            char *param);
+ extern unsigned int msgq_bufleft(struct MsgBuf *mb);
++extern void msgq_excise(struct MsgQ *mq, const char *buf, unsigned int len);
+ 
+ #endif /* INCLUDED_msgq_h */
 diff --git a/include/numeric.h b/include/numeric.h
 index 338920c..86651ee 100644
 --- a/include/numeric.h
@@ -21892,7 +21883,7 @@ index dd56879..fb75286 100644
  };
  
 diff --git a/ircd/s_auth.c b/ircd/s_auth.c
-index bfd58c0..c7551be 100644
+index bfd58c0..a6e0bc2 100644
 --- a/ircd/s_auth.c
 +++ b/ircd/s_auth.c
 @@ -38,6 +38,7 @@
@@ -21970,146 +21961,7 @@ index bfd58c0..c7551be 100644
  /** Set username for user associated with \a auth.
   * @param[in] auth Client authorization request to work on.
   * @return Zero if client is kept, CPTR_KILLED if client rejected.
-@@ -221,58 +253,30 @@ static int auth_set_username(struct AuthRequest *auth)
-   struct User   *user = cli_user(sptr);
-   char *d;
-   char *s;
--  int   rlen = USERLEN;
--  int   killreason;
--  short character = 0;
--  short pos = 0;
-+  short upper = 0;
-+  short lower = 0;
-+  short leadcaps = 0;
-   short other = 0;
-   short digits = 0;
-+  short digitgroups = 0;
-   char  ch;
-   char  last;
- 
--  if (FlagHas(&auth->flags, AR_IAUTH_USERNAME))
-+  if (FlagHas(&auth->flags, AR_IAUTH_FUSERNAME))
-   {
--      ircd_strncpy(cli_user(sptr)->username, cli_username(sptr), USERLEN);
-+    ircd_strncpy(user->username, cli_username(sptr), USERLEN);
-   }
--  else
-+  else if (IsIdented(sptr))
-   {
--    /* Copy username from source to destination.  Since they may be the
--     * same, and we may prefix with a '~', use a buffer character (ch)
--     * to hold the next character to copy.
--     */
--    s = IsIdented(sptr) ? cli_username(sptr) : user->username;
--    last = *s++;
--    d = user->username;
--    if (HasFlag(sptr, FLAG_DOID) && !IsIdented(sptr))
--    {
--      *d++ = '~';
--      --rlen;
--    }
--    while (last && !IsCntrl(last) && rlen--)
--    {
--      ch = *s++;
--      *d++ = IsUserChar(last) ? last : '_';
--      last = (ch != '~') ? ch : '_';
--    }
--    *d = 0;
-+     s = IsIdented(sptr) ? cli_username(sptr) : user->username;
-   }
-+  /* else username was set by identd lookup (or failure thereof) */
- 
-   /* If username is empty or just ~, reject. */
-   if ((user->username[0] == '\0')
-       || ((user->username[0] == '~') && (user->username[1] == '\0')))
-     return exit_client(sptr, sptr, &me, "USER: Bogus userid.");
- 
--  /* Have to set up "realusername" before doing the gline check below */
--  ircd_strncpy(user->realusername, user->username, USERLEN);
--
--  /* Check for K- or G-line. */
--  killreason = find_kill(sptr, 1);
--  if (killreason) {
--    ServerStats->is_ref++;
--    return exit_client(sptr, sptr, &me,
--                       (killreason == -1 ? "K-lined" : "G-lined"));
--  }
--
-   if (!FlagHas(&auth->flags, AR_IAUTH_FUSERNAME))
-   {
-     /* Check for mixed case usernames, meaning probably hacked.  Jon2 3-94
-@@ -281,21 +285,32 @@ static int auth_set_username(struct AuthRequest *auth)
-     s = d = user->username + (user->username[0] == '~');
-     for (last = '\0';
-          (ch = *d++) != '\0';
--         pos++, last = ch)
-+         last = ch)
-     {
--      if (IsLower(ch) || IsUpper(ch))
-+      if (IsLower(ch))
-       {
--        character++;
-+        lower++;
-+      }
-+      else if (IsUpper(ch))
-+      {
-+        upper++;
-+        /* Accept caps as leading if we haven't seen lower case or digits yet. */
-+        if ((leadcaps || last == '\0') && !lower && !digits)
-+          leadcaps++;
-       }
-       else if (IsDigit(ch))
-       {
-         digits++;
-+        if (!IsDigit(last))
-+        {
-+          digitgroups++;
-+        }
-       }
-       else if (ch == '-' || ch == '_' || ch == '.')
-       {
-         other++;
-         /* If -_. exist at start, consecutively, or more than twice, reject. */
--        if (pos == 0 || last == '-' || last == '_' || last == '.' || other > 2)
-+        if (last == '\0' || last == '-' || last == '_' || last == '.' || other > 2)
-           goto badid;
-       }
-       else /* All other punctuation is rejected. */
-@@ -303,7 +318,23 @@ static int auth_set_username(struct AuthRequest *auth)
-     }
- 
-     /* Must have at least one letter. */
--    if (!character)
-+    if (!lower && !upper)
-+      goto badid;
-+
-+    /* If more than two groups of digits, reject. */
-+    if (digitgroups > 2)
-+      goto badid;
-+    /* If mixed case, first must be capital, but no more than three;
-+     * but if three capitals, they must all be leading. */
-+    if (lower && upper && (!leadcaps || leadcaps > 3 ||
-+                           (upper > 2 && upper > leadcaps)))
-+      goto badid;
-+    /* If two different groups of digits, one must be either at the
-+     * start or end. */
-+    if (digitgroups == 2 && !(IsDigit(s[0]) || IsDigit(ch)))
-+      goto badid;
-+    /* Final character must not be punctuation. */
-+    if (!IsAlnum(last))
-       goto badid;
-   }
- 
-@@ -315,7 +346,7 @@ badid:
-   if (IsIdented(sptr) && !strcmp(cli_username(sptr), user->username))
-     return 0;
- 
--  ServerStats->is_ref++;
-+  ++ServerStats->is_ref;
-   send_reply(sptr, SND_EXPLICIT | ERR_INVALIDUSERNAME,
-              ":Your username is invalid.");
-   send_reply(sptr, SND_EXPLICIT | ERR_INVALIDUSERNAME,
-@@ -373,9 +404,20 @@ static int check_auth_finished(struct AuthRequest *auth)
+@@ -373,9 +405,20 @@ static int check_auth_finished(struct AuthRequest *auth)
        send_reply(auth->client, ERR_PASSWDMISMATCH);
        return exit_client(auth->client, auth->client, &me, "Bad Password");
      }
@@ -22131,7 +21983,7 @@ index bfd58c0..c7551be 100644
    /* Check if iauth is done. */
    if (FlagHas(&auth->flags, AR_IAUTH_PENDING))
    {
-@@ -705,6 +747,18 @@ void destroy_auth_request(struct AuthRequest* auth)
+@@ -705,6 +748,17 @@ void destroy_auth_request(struct AuthRequest* auth)
    auth_freelist = auth;
  }
  
@@ -22142,9 +21994,8 @@ index bfd58c0..c7551be 100644
 +  assert(auth != NULL);
 +  if(CapHas(cli_active(auth->client), CAP_SASL)) {
 +	 sendto_iauth(auth->client, "Y %s", crypt);
-+	 return check_auth_finished(auth);
-+  } else
-+	  return 0;
++  }
++  return 0;
 +}
 +
  /** Handle a 'ping' (authorization) timeout for a client.
