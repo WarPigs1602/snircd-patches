@@ -18920,7 +18920,7 @@ index 025a7b6..c879db9 100644
 -"])
 +"
 diff --git a/doc/example.conf b/doc/example.conf
-index 5e20dcb..2efdf37 100644
+index 5e20dcb..f4c8ece 100644
 --- a/doc/example.conf
 +++ b/doc/example.conf
 @@ -60,6 +60,8 @@
@@ -19305,7 +19305,15 @@ index 5e20dcb..2efdf37 100644
  #  "DOMAINNAME"="<obtained from /etc/resolv.conf by ./configure>";
  #  "RELIABLE_CLOCK"="FALSE";
  #  "BUFFERPOOL"="27000000";
-@@ -880,6 +977,15 @@ features
+@@ -865,6 +962,7 @@ features
+ #  "HIS_STATS_y" = "TRUE";
+ #  "HIS_STATS_z" = "TRUE";
+ #  "HIS_STATS_IAUTH" = "TRUE";
++#  "HIS_WEBIRC_NAME" = "webircgateway";
+ #  "HIS_WHOIS_SERVERNAME" = "TRUE";
+ #  "HIS_WHOIS_IDLETIME" = "TRUE";
+ #  "HIS_WHOIS_LOCALCHAN" = "TRUE";
+@@ -880,6 +978,15 @@ features
  #  "HIS_SERVERINFO" = "The Undernet Underworld";
  #  "HIS_URLSERVERS" = "http://www.undernet.org/servers.php";
  #  "URLREG" = "http://cservice.undernet.org/live/";
@@ -19622,7 +19630,7 @@ index 40aeb80..87b5bf9 100644
  /** Signal event generator. */
  struct Signal {
 diff --git a/include/ircd_features.h b/include/ircd_features.h
-index 9118f7c..ea4595e 100644
+index 9118f7c..84b6218 100644
 --- a/include/ircd_features.h
 +++ b/include/ircd_features.h
 @@ -64,6 +64,7 @@ enum Feature {
@@ -19665,6 +19673,14 @@ index 9118f7c..ea4595e 100644
    /* HEAD_IN_SAND Features */
    FEAT_HIS_SNOTICES,
    FEAT_HIS_SNOTICES_OPER_ONLY,
+@@ -146,6 +165,7 @@ enum Feature {
+   FEAT_HIS_STATS_y,
+   FEAT_HIS_STATS_z,
+   FEAT_HIS_STATS_IAUTH,
++  FEAT_HIS_WEBIRC_NAME,
+   FEAT_HIS_WHOIS_SERVERNAME,
+   FEAT_HIS_WHOIS_IDLETIME,
+   FEAT_HIS_WHOIS_LOCALCHAN,
 diff --git a/include/ircd_tls.h b/include/ircd_tls.h
 new file mode 100644
 index 0000000..4093f23
@@ -19906,7 +19922,7 @@ index 199cfb2..82fcf2a 100644
  
  #endif /* INCLUDED_msgq_h */
 diff --git a/include/numeric.h b/include/numeric.h
-index 338920c..86651ee 100644
+index 338920c..24f75a9 100644
 --- a/include/numeric.h
 +++ b/include/numeric.h
 @@ -98,6 +98,7 @@ extern const struct Numeric* get_error_numeric(int err);
@@ -19962,7 +19978,15 @@ index 338920c..86651ee 100644
  #define ERR_NOOPERHOST       491
  /*      ERR_NOSERVICEHOST    492 	   IRCnet extension */
  
-@@ -470,10 +474,24 @@ extern const struct Numeric* get_error_numeric(int err);
+@@ -464,16 +468,30 @@ extern const struct Numeric* get_error_numeric(int err);
+ #define ERR_QUARANTINED      524        /* Undernet extension -Vampire */
+ #define ERR_BADHOSTMASK      530	/* QuakeNet extension -froo */
+ #define ERR_HOSTUNAVAIL      531	/* QuakeNet extension -froo */
+-
++#define ERR_TLSCLIFINGERPRINT 532
++#define ERR_TLSMODE          533
+ #define ERR_NOTLOWEROPLEVEL  560	/* Undernet extension */
+ #define ERR_NOTMANAGER       561	/* Undernet extension */
  #define ERR_CHANSECURED      562	/* Undernet extension */
  #define ERR_UPASSSET         563	/* Undernet extension */
  #define ERR_UPASSNOTSET      564	/* Undernet extension */
@@ -19970,7 +19994,6 @@ index 338920c..86651ee 100644
  #define ERR_NOMANAGER        566	/* Undernet extension */
  #define ERR_UPASS_SAME_APASS 567        /* Undernet extension */
 -#define ERR_LASTERROR        568
-+#define ERR_TLSCLIFINGERPRINT 632   /* Nefarious & Undernet extension */
 +
 +#define RPL_STARTTLS         670    /* Nefarious, Undernet */
 +
@@ -20273,7 +20296,7 @@ index 01a5ea6..4c1ee76 100644
  ircd_crypt_plain.o: ircd_crypt_plain.c ../config.h \
    ../include/ircd_crypt.h ../include/ircd_crypt_plain.h \
 diff --git a/ircd/channel.c b/ircd/channel.c
-index fdb3c25..e2e6dfb 100644
+index fdb3c25..5337874 100644
 --- a/ircd/channel.c
 +++ b/ircd/channel.c
 @@ -711,6 +711,10 @@ int member_can_send_to_channel(struct Membership* member, int reveal)
@@ -20339,7 +20362,21 @@ index fdb3c25..e2e6dfb 100644
      MODE_ADD,		'+',
      MODE_DEL,		'-',
      0x0, 0x0
-@@ -3621,7 +3631,10 @@ joinbuf_join(struct JoinBuf *jbuf, struct Channel *chan, unsigned int flags)
+@@ -3406,6 +3416,13 @@ mode_parse(struct ModeBuf *mbuf, struct Client *cptr, struct Client *sptr,
+ 	mode_parse_ban(&state, flag_p);
+ 	break;
+ 
++      case 'Z': /* deal with TLS */
++		if(IsTLS(state.cptr))
++	mode_parse_mode(&state, flag_p);
++	else
++  send_reply(state.cptr, ERR_TLSMODE, state.chptr->chname);		
++	break;
++
+       case 'o': /* deal with ops/voice */
+       case 'v':
+ 	mode_parse_client(&state, flag_p);
+@@ -3621,7 +3638,10 @@ joinbuf_join(struct JoinBuf *jbuf, struct Channel *chan, unsigned int flags)
  
      if (!((chan->mode.mode & MODE_DELJOINS) && !(flags & CHFL_VOICED_OR_OPPED))) {
        /* Send the notification to the channel */
@@ -20351,7 +20388,7 @@ index fdb3c25..e2e6dfb 100644
  
        /* send an op, too, if needed */
        if (flags & CHFL_CHANOP && (oplevel < MAXOPLEVEL || !MyUser(jbuf->jb_source)))
-@@ -3629,7 +3642,7 @@ joinbuf_join(struct JoinBuf *jbuf, struct Channel *chan, unsigned int flags)
+@@ -3629,7 +3649,7 @@ joinbuf_join(struct JoinBuf *jbuf, struct Channel *chan, unsigned int flags)
                                           CMD_MODE, chan, NULL, 0, "%H +o %C",
  					 chan, jbuf->jb_source);
      } else if (MyUser(jbuf->jb_source))
@@ -20360,7 +20397,7 @@ index fdb3c25..e2e6dfb 100644
    }
  
    if (jbuf->jb_type == JOINBUF_TYPE_PARTALL ||
-@@ -3722,8 +3735,10 @@ int IsInvited(struct Client* cptr, const void* chptr)
+@@ -3722,8 +3742,10 @@ int IsInvited(struct Client* cptr, const void* chptr)
  void RevealDelayedJoin(struct Membership *member)
  {
    ClearDelayedJoin(member);
@@ -20373,7 +20410,7 @@ index fdb3c25..e2e6dfb 100644
    CheckDelayedJoins(member->channel);
  }
  
-@@ -3737,3 +3752,12 @@ void CheckDelayedJoins(struct Channel *chan)
+@@ -3737,3 +3759,12 @@ void CheckDelayedJoins(struct Channel *chan)
                                       "%H -d", chan);
    }
  }
@@ -20634,7 +20671,7 @@ index c246aff..7c829cd 100644
      if (dbg_client)
        conf_debug_iline(dbg_client);
 diff --git a/ircd/ircd_features.c b/ircd/ircd_features.c
-index ffb14a5..efa99a2 100644
+index ffb14a5..67ae1e0 100644
 --- a/ircd/ircd_features.c
 +++ b/ircd/ircd_features.c
 @@ -317,6 +317,7 @@ static struct FeatureDesc {
@@ -20677,6 +20714,14 @@ index ffb14a5..efa99a2 100644
    /* HEAD_IN_SAND Features */
    F_B(HIS_SNOTICES, 0, 1, 0),
    F_B(HIS_SNOTICES_OPER_ONLY, 0, 1, 0),
+@@ -399,6 +418,7 @@ static struct FeatureDesc {
+   F_B(HIS_STATS_y, 0, 1, 0),
+   F_B(HIS_STATS_z, 0, 1, 0),
+   F_B(HIS_STATS_IAUTH, 0, 1, 0),
++  F_S(HIS_WEBIRC_NAME, 0, "qwebirc", 0),
+   F_B(HIS_WHOIS_SERVERNAME, 0, 1, 0),
+   F_B(HIS_WHOIS_IDLETIME, 0, 1, 0),
+   F_B(HIS_WHOIS_LOCALCHAN, 0, 1, 0),
 diff --git a/ircd/ircd_lexer.l b/ircd/ircd_lexer.l
 index 4ed667f..791cafe 100644
 --- a/ircd/ircd_lexer.l
@@ -22070,7 +22115,7 @@ index 0000000..dadb3bb
 +}
 \ No newline at end of file
 diff --git a/ircd/m_whois.c b/ircd/m_whois.c
-index ed84d5b..769c90e 100644
+index ed84d5b..d09a938 100644
 --- a/ircd/m_whois.c
 +++ b/ircd/m_whois.c
 @@ -231,7 +231,10 @@ static void do_whois(struct Client* sptr, struct Client *acptr, int parc)
@@ -22080,7 +22125,7 @@ index ed84d5b..769c90e 100644
 -  }
 +    if ((sptr == acptr || IsAnOper(sptr))
 +        && IsWebirc(acptr))
-+        send_reply(sptr, RPL_WHOISWEBIRC, name, "webirc");
++        send_reply(sptr, RPL_WHOISWEBIRC, name, feature_str(FEAT_HIS_WEBIRC_NAME));
 + }
  }
  
@@ -22615,7 +22660,7 @@ index 95577f8..debd16e 100644
      if (EmptyString(deny->message))
        send_reply(cptr, SND_EXPLICIT | ERR_YOUREBANNEDCREEP,
 diff --git a/ircd/s_err.c b/ircd/s_err.c
-index 9ea3f41..07e240a 100644
+index 9ea3f41..79da10d 100644
 --- a/ircd/s_err.c
 +++ b/ircd/s_err.c
 @@ -472,7 +472,7 @@ static Numeric replyTable[] = {
@@ -22677,15 +22722,18 @@ index 9ea3f41..07e240a 100644
  /* 491 */
    { ERR_NOOPERHOST, ":No Operator block for your host", "491" },
  /* 492 */
-@@ -1096,7 +1096,7 @@ static Numeric replyTable[] = {
+@@ -1096,9 +1096,9 @@ static Numeric replyTable[] = {
  /* 531 */
    { ERR_HOSTUNAVAIL, "%s :sethost not found", "531" },
  /* 532 */
 -  { 0 },
 +  { ERR_TLSCLIFINGERPRINT, ":TLS certificate fingerprint did not match", "532" },
  /* 533 */
-   { 0 },
+-  { 0 },
++  { ERR_TLSMODE, ":Cannot set mode on %s, you are not connected with TLS", "533" },
  /* 534 */
+   { 0 },
+ /* 535 */
 @@ -1162,7 +1162,7 @@ static Numeric replyTable[] = {
  /* 564 */
    { ERR_UPASSNOTSET, "%s :Cannot set user pass (+U) until Admin pass (+A) is set. First use /MODE %s +A <adminpass>", "564" },
