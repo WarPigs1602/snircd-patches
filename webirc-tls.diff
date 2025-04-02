@@ -19444,7 +19444,7 @@ index 7b8f4db..96ccf9b 100644
  extern void CheckDelayedJoins(struct Channel *chan);
  
 diff --git a/include/client.h b/include/client.h
-index 4da341e..fb3f3d2 100644
+index 4da341e..d203259 100644
 --- a/include/client.h
 +++ b/include/client.h
 @@ -64,6 +64,9 @@ struct AuthRequest;
@@ -19457,16 +19457,17 @@ index 4da341e..fb3f3d2 100644
  
  /** Single element in a flag bitset array. */
  typedef unsigned long flagpage_t;
-@@ -183,6 +186,8 @@ enum Flag
+@@ -183,6 +186,9 @@ enum Flag
      FLAG_NOIDLE,                    /**< user's idletime is hidden */
      FLAG_XTRAOP,                    /**< oper has special powers */
      FLAG_OPERNAME,                  /**< Server sends oper name in mode string */
 +    FLAG_NEGOTIATING_TLS,           /**< TLS negotation ongoing */
 +    FLAG_TLS,                       /**< user is using TLS */
++    FLAG_WEBIRC,                    /**< user is using Webirc */
  
      FLAG_LAST_FLAG,                 /**< number of flags */
      FLAG_LOCAL_UMODES = FLAG_LOCOP, /**< First local mode flag */
-@@ -241,14 +246,17 @@ struct Connection
+@@ -241,14 +247,17 @@ struct Connection
    char con_buffer[BUFSIZE];          /**< Incoming message buffer; or
                                          the error that caused this
                                          clients socket to close. */
@@ -19486,7 +19487,7 @@ index 4da341e..fb3f3d2 100644
  };
  
  /** Magic constant to identify valid Connection structures. */
-@@ -273,6 +281,9 @@ struct Client {
+@@ -273,6 +282,9 @@ struct Client {
    unsigned int   cli_hopcount;    /**< number of servers to this 0 = local */
    struct irc_in_addr cli_ip;      /**< Real IP of client */
    short          cli_status;      /**< Client type */
@@ -19496,7 +19497,7 @@ index 4da341e..fb3f3d2 100644
    char cli_name[HOSTLEN + 1];     /**< Unique name of the client, nick or host */
    char cli_username[USERLEN + 1]; /**< Username determined by ident lookup */
    char cli_info[REALLEN + 1];     /**< Free form additional client information */
-@@ -299,6 +310,8 @@ struct Client {
+@@ -299,6 +311,8 @@ struct Client {
  #define cli_user(cli)		((cli)->cli_user)
  /** Get Server structure for client, if client is a server. */
  #define cli_serv(cli)		((cli)->cli_serv)
@@ -19505,7 +19506,7 @@ index 4da341e..fb3f3d2 100644
  /** Get Whowas link for client. */
  #define cli_whowas(cli)		((cli)->cli_whowas)
  /** Get client numnick. */
-@@ -335,6 +348,8 @@ struct Client {
+@@ -335,6 +349,8 @@ struct Client {
  #define cli_username(cli)	((cli)->cli_username)
  /** Get client realname (information field). */
  #define cli_info(cli)		((cli)->cli_info)
@@ -19514,7 +19515,7 @@ index 4da341e..fb3f3d2 100644
  
  /** Get number of incoming bytes queued for client. */
  #define cli_count(cli)		con_count(cli_connect(cli))
-@@ -384,6 +399,8 @@ struct Client {
+@@ -384,6 +400,8 @@ struct Client {
  #define cli_sockhost(cli)	con_sockhost(cli_connect(cli))
  /** Get the client's password. */
  #define cli_passwd(cli)		con_passwd(cli_connect(cli))
@@ -19523,7 +19524,7 @@ index 4da341e..fb3f3d2 100644
  /** Get the unprocessed input buffer for a client's connection.  */
  #define cli_buffer(cli)		con_buffer(cli_connect(cli))
  /** Get the Socket structure for sending to a client. */
-@@ -459,6 +476,8 @@ struct Client {
+@@ -459,6 +477,8 @@ struct Client {
  #define con_sockhost(con)	((con)->con_sockhost)
  /** Get the password sent by the remote end of the connection.  */
  #define con_passwd(con)		((con)->con_passwd)
@@ -19532,7 +19533,7 @@ index 4da341e..fb3f3d2 100644
  /** Get the buffer of unprocessed incoming data from the connection. */
  #define con_buffer(con)		((con)->con_buffer)
  /** Get the Socket for the connection. */
-@@ -468,9 +487,9 @@ struct Client {
+@@ -468,9 +488,9 @@ struct Client {
  /** Get the oper privilege set for the connection. */
  #define con_privs(con)          (&(con)->con_privs)
  /** Get the peer's capabilities for the connection. */
@@ -19544,7 +19545,7 @@ index 4da341e..fb3f3d2 100644
  /** Get the auth request for the connection. */
  #define con_auth(con)		((con)->con_auth)
  
-@@ -605,6 +624,10 @@ struct Client {
+@@ -605,6 +625,12 @@ struct Client {
  #define IsNoIdle(x)             HasFlag(x, FLAG_NOIDLE)
  /** Return non-zero if the client has an active PING request. */
  #define IsPingSent(x)           HasFlag(x, FLAG_PINGSENT)
@@ -19552,10 +19553,12 @@ index 4da341e..fb3f3d2 100644
 +#define IsTLS(x)                HasFlag(x, FLAG_TLS)
 +/** Return non-zero if the client is (re-)negotiating TLS. */
 +#define IsNegotiatingTLS(x)     HasFlag(x, FLAG_NEGOTIATING_TLS)
++/** Return non-zero if the client is using WEBIRC */
++#define IsWebirc(x)                HasFlag(x, FLAG_WEBIRC)
  /** Return non-zero if the client should not receive privmsgs/notices
   * from unauthed users */
  #define IsAccountOnly(x)        HasFlag(x, FLAG_ACCOUNTONLY)
-@@ -672,6 +695,10 @@ struct Client {
+@@ -672,6 +698,12 @@ struct Client {
  #define SetNoIdle(x)            SetFlag(x, FLAG_NOIDLE)
  /** Mark a client as having a pending PING. */
  #define SetPingSent(x)          SetFlag(x, FLAG_PINGSENT)
@@ -19563,10 +19566,12 @@ index 4da341e..fb3f3d2 100644
 +#define SetTLS(x)               SetFlag(x, FLAG_TLS)
 +/** Mark a client as (re-)negotiating TLS. */
 +#define SetNegotiatingTLS(x)    SetFlag(x, FLAG_NEGOTIATING_TLS)
++/** Mark a client as using Webirc. */
++#define SetWebirc(x)               SetFlag(x, FLAG_WEBIRC)
  /** Mark a client as having mode +R (account only). */
  #define SetAccountOnly(x)       SetFlag(x, FLAG_ACCOUNTONLY)
  /** Mark a client as having mode +P (paranoid). */
-@@ -721,6 +748,8 @@ struct Client {
+@@ -721,6 +753,8 @@ struct Client {
  #define ClearAccountOnly(x)     ClrFlag(x, FLAG_ACCOUNTONLY)
  /** Remove mode +P (paranoid) from a client */
  #define ClearParanoid(x)        ClrFlag(x, FLAG_PARANOID)
@@ -22065,18 +22070,17 @@ index 0000000..dadb3bb
 +}
 \ No newline at end of file
 diff --git a/ircd/m_whois.c b/ircd/m_whois.c
-index ed84d5b..e9708ec 100644
+index ed84d5b..769c90e 100644
 --- a/ircd/m_whois.c
 +++ b/ircd/m_whois.c
-@@ -231,7 +231,11 @@ static void do_whois(struct Client* sptr, struct Client *acptr, int parc)
+@@ -231,7 +231,10 @@ static void do_whois(struct Client* sptr, struct Client *acptr, int parc)
                                sptr == acptr || parc >= 3))))
         send_reply(sptr, RPL_WHOISIDLE, name, CurrentTime - user->last,
                    cli_firsttime(acptr));
 -  }
-+    if (MyConnect(acptr)
-+        && (parc >= 3 || sptr == acptr || IsAnOper(sptr))
-+        && acptr->cli_webi == 1)
-+        send_reply(sptr, RPL_WHOISWEBIRC, name, cli_webirc(acptr)); 
++    if ((sptr == acptr || IsAnOper(sptr))
++        && IsWebirc(acptr))
++        send_reply(sptr, RPL_WHOISWEBIRC, name, "webirc");
 + }
  }
  
@@ -22175,7 +22179,7 @@ index dd56879..fb75286 100644
  };
  
 diff --git a/ircd/s_auth.c b/ircd/s_auth.c
-index bfd58c0..2e02ccd 100644
+index bfd58c0..d634de5 100644
 --- a/ircd/s_auth.c
 +++ b/ircd/s_auth.c
 @@ -38,6 +38,7 @@
@@ -22213,7 +22217,7 @@ index bfd58c0..2e02ccd 100644
  /** Enumeration of IAuth connection flags. */
  enum IAuthFlag
  {
-@@ -211,6 +210,41 @@ static int preregister_user(struct Client *cptr);
+@@ -211,6 +210,40 @@ static int preregister_user(struct Client *cptr);
  typedef int (*iauth_cmd_handler)(struct IAuth *iauth, struct Client *cli,
  				 int parc, char **params);
  
@@ -22245,8 +22249,7 @@ index bfd58c0..2e02ccd 100644
 +
 +  if (IAuthHas(iauth, IAUTH_UNDERNET)) {
 +    sendto_iauth(cptr, "W %s %s %s %s", password, username, hostname, ircd_ntoa(ip));
-+	cptr->cli_webi = 1;
-+    ircd_strncpy(cli_webirc(cptr), username, BUFSIZE);
++	SetWebirc(cptr);
 +  }
 +  return 0;
 +}
@@ -22255,7 +22258,7 @@ index bfd58c0..2e02ccd 100644
  /** Set username for user associated with \a auth.
   * @param[in] auth Client authorization request to work on.
   * @return Zero if client is kept, CPTR_KILLED if client rejected.
-@@ -373,9 +407,20 @@ static int check_auth_finished(struct AuthRequest *auth)
+@@ -373,9 +406,20 @@ static int check_auth_finished(struct AuthRequest *auth)
        send_reply(auth->client, ERR_PASSWDMISMATCH);
        return exit_client(auth->client, auth->client, &me, "Bad Password");
      }
@@ -22277,7 +22280,7 @@ index bfd58c0..2e02ccd 100644
    /* Check if iauth is done. */
    if (FlagHas(&auth->flags, AR_IAUTH_PENDING))
    {
-@@ -705,6 +750,17 @@ void destroy_auth_request(struct AuthRequest* auth)
+@@ -705,6 +749,17 @@ void destroy_auth_request(struct AuthRequest* auth)
    auth_freelist = auth;
  }
  
@@ -22295,7 +22298,7 @@ index bfd58c0..2e02ccd 100644
  /** Handle a 'ping' (authorization) timeout for a client.
   * @param[in] cptr The client whose session authorization has timed out.
   * @return Zero if client is kept, CPTR_KILLED if client rejected.
-@@ -1382,10 +1438,7 @@ static int sendto_iauth(struct Client *cptr, const char *format, ...)
+@@ -1382,10 +1437,7 @@ static int sendto_iauth(struct Client *cptr, const char *format, ...)
    /* Build the message buffer. */
    vd.vd_format = format;
    va_start(vd.vd_args, format);
@@ -22307,7 +22310,7 @@ index bfd58c0..2e02ccd 100644
    va_end(vd.vd_args);
  
    /* Tack it onto the iauth sendq and try to write it. */
-@@ -1882,6 +1935,60 @@ static int iauth_cmd_kill(struct IAuth *iauth, struct Client *cli,
+@@ -1882,6 +1934,60 @@ static int iauth_cmd_kill(struct IAuth *iauth, struct Client *cli,
    return 0;
  }
  
@@ -22368,7 +22371,7 @@ index bfd58c0..2e02ccd 100644
  /** Change a client's usermode.
   * @param[in] iauth Active IAuth session.
   * @param[in] cli Client referenced by command.
-@@ -1940,6 +2047,7 @@ static void iauth_parse(struct IAuth *iauth, char *message)
+@@ -1940,6 +2046,7 @@ static void iauth_parse(struct IAuth *iauth, char *message)
    case 'A': handler = iauth_cmd_config; has_cli = 0; break;
    case 's': handler = iauth_cmd_newstats; has_cli = 0; break;
    case 'S': handler = iauth_cmd_stats; has_cli = 0; break;
@@ -23500,20 +23503,21 @@ index 9ea3f41..07e240a 100644
  };
  
 diff --git a/ircd/s_user.c b/ircd/s_user.c
-index 7f28f0c..45e2834 100644
+index 7f28f0c..835a38f 100644
 --- a/ircd/s_user.c
 +++ b/ircd/s_user.c
-@@ -552,7 +552,8 @@ static const struct UserMode {
+@@ -552,7 +552,9 @@ static const struct UserMode {
    { FLAG_NOCHAN,      'n' },
    { FLAG_NOIDLE,      'I' },
    { FLAG_SETHOST,     'h' },
 -  { FLAG_PARANOID,    'P' }
 +  { FLAG_PARANOID,    'P' },
-+  { FLAG_TLS,         'z' }
++  { FLAG_TLS,         'z' },
++  { FLAG_WEBIRC,      'W' }
  };
  
  /** Length of #userModeList. */
-@@ -974,12 +975,14 @@ hide_hostmask(struct Client *cptr, unsigned int flag)
+@@ -974,12 +976,14 @@ hide_hostmask(struct Client *cptr, unsigned int flag)
    if (!HasFlag(cptr, FLAG_HIDDENHOST) || !HasFlag(cptr, FLAG_ACCOUNT) || HasSetHost(cptr))
      return 0;
  
@@ -23530,7 +23534,7 @@ index 7f28f0c..45e2834 100644
     send_reply(cptr, RPL_HOSTHIDDEN, cli_user(cptr)->host);
  
    /*
-@@ -992,15 +995,19 @@ hide_hostmask(struct Client *cptr, unsigned int flag)
+@@ -992,15 +996,19 @@ hide_hostmask(struct Client *cptr, unsigned int flag)
        continue;
      /* Send a JOIN unless the user's join has been delayed. */
      if (!IsDelayedJoin(chan))
@@ -23556,7 +23560,7 @@ index 7f28f0c..45e2834 100644
    }
    return 0;
  }
-@@ -1435,11 +1442,16 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
+@@ -1435,11 +1443,21 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
  	}
  	/* There is no -r */
  	break;
@@ -23564,6 +23568,11 @@ index 7f28f0c..45e2834 100644
 +        if (what == MODE_ADD)
 +          SetTLS(sptr);
 +        /* There is no -z */
++        break;
++      case 'W':
++        if (what == MODE_ADD)
++          SetWebirc(sptr);
++        /* There is no -W */
 +        break;
        default:
          send_reply(sptr, ERR_UMODEUNKNOWNFLAG, *m);
@@ -23574,7 +23583,7 @@ index 7f28f0c..45e2834 100644
    }
    /*
     * Evaluate rules for new user mode
-@@ -1453,6 +1465,10 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
+@@ -1453,6 +1471,14 @@ int set_user_mode(struct Client *cptr, struct Client *sptr, int parc,
        ClearLocOp(sptr);
      if (!FlagHas(&setflags, FLAG_ACCOUNT) && IsAccount(sptr))
        ClrFlag(sptr, FLAG_ACCOUNT);
@@ -23582,10 +23591,14 @@ index 7f28f0c..45e2834 100644
 +      ClrFlag(sptr, FLAG_TLS);
 +    else if (FlagHas(&setflags, FLAG_TLS) && !IsTLS(sptr))
 +      SetFlag(sptr, FLAG_TLS);
++    if (!FlagHas(&setflags, FLAG_WEBIRC) && IsWebirc(sptr))
++      ClrFlag(sptr, FLAG_WEBIRC);
++    else if (FlagHas(&setflags, FLAG_WEBIRC) && !IsWebirc(sptr))
++      SetFlag(sptr, FLAG_WEBIRC);
      /*
       * new umode; servers can set it, local users cannot;
       * prevents users from /kick'ing or /mode -o'ing
-@@ -1634,6 +1650,7 @@ char *umode_str(struct Client *cptr, int opernames)
+@@ -1634,6 +1660,7 @@ char *umode_str(struct Client *cptr, int opernames)
                                     overwritten by send_umode() */
  }
  
@@ -23593,7 +23606,7 @@ index 7f28f0c..45e2834 100644
  /** Send a mode change string for \a sptr to \a cptr.
   * @param[in] cptr Destination of mode change message.
   * @param[in] sptr User whose mode has changed.
-@@ -2028,3 +2045,12 @@ send_supported(struct Client *cptr)
+@@ -2028,3 +2055,12 @@ send_supported(struct Client *cptr)
  
    return 0; /* convenience return, if it's ever needed */
  }
