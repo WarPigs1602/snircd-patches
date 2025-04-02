@@ -20367,10 +20367,10 @@ index fdb3c25..5337874 100644
  	break;
  
 +      case 'Z': /* deal with TLS */
-+		if(IsTLS(state.cptr))
++		if(IsTLS(state.sptr))
 +	mode_parse_mode(&state, flag_p);
 +	else
-+  send_reply(state.cptr, ERR_TLSMODE, state.chptr->chname);		
++  send_reply(state.sptr, ERR_TLSMODE, state.chptr->chname);		
 +	break;
 +
        case 'o': /* deal with ops/voice */
