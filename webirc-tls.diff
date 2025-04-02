@@ -19617,10 +19617,18 @@ index 40aeb80..87b5bf9 100644
  /** Signal event generator. */
  struct Signal {
 diff --git a/include/ircd_features.h b/include/ircd_features.h
-index 9118f7c..35314d2 100644
+index 9118f7c..ea4595e 100644
 --- a/include/ircd_features.h
 +++ b/include/ircd_features.h
-@@ -100,6 +100,15 @@ enum Feature {
+@@ -64,6 +64,7 @@ enum Feature {
+   FEAT_TOPIC_BURST,
+   FEAT_AUTOCHANMODES,
+   FEAT_AUTOCHANMODES_LIST,
++  FEAT_ENABLE_GLINE_OPER_EXCEPTION,
+ 
+   /* features that probably should not be touched */
+   FEAT_KILLCHASETIMELIMIT,
+@@ -100,6 +101,15 @@ enum Feature {
    FEAT_IRCD_RES_TIMEOUT,
    FEAT_AUTH_TIMEOUT,
    FEAT_ANNOUNCE_INVITES,
@@ -19636,7 +19644,7 @@ index 9118f7c..35314d2 100644
  
    /* features that affect all operators */
    FEAT_EXTENDED_CHECKCMD,
-@@ -108,6 +117,15 @@ enum Feature {
+@@ -108,6 +118,15 @@ enum Feature {
    FEAT_SETHOST_USER,
    FEAT_SETHOST_AUTO,
  
@@ -20096,6 +20104,18 @@ index 209bc6c..84d59df 100644
 +			   struct Channel *chptr,
 +			   struct Client *one);
  #endif /* INCLUDED_send_h */
+diff --git a/include/struct.h b/include/struct.h
+index 16d9f8e..00a4922 100644
+--- a/include/struct.h
++++ b/include/struct.h
+@@ -84,6 +84,7 @@ struct User {
+   char               realusername[USERLEN + 1]; /**< actual username */
+   char               realhost[HOSTLEN + 1];     /**< actual hostname */
+   char               account[ACCOUNTLEN + 1];   /**< IRC account name */
++  char               authhost[ACCOUNTLEN + HOSTLEN + 2];    /**< actual hostname */
+   time_t	     acc_create;                /**< IRC account timestamp */
+   unsigned long       acc_id;                    /**< IRC account unique id */
+   char*              opername;                  /**< IRC Oper Account name */
 diff --git a/include/supported.h b/include/supported.h
 index 38d87eb..60dc0a5 100644
 --- a/include/supported.h
@@ -20418,6 +20438,163 @@ index 3ddaebe..268c010 100644
 +  return 1;*/
 +  return strcmp(cli_tls_fingerprint(cptr), fingerprint) == 0;
 +}
+diff --git a/ircd/gline.c b/ircd/gline.c
+index b68225d..3815ae9 100644
+--- a/ircd/gline.c
++++ b/ircd/gline.c
+@@ -201,6 +201,48 @@ make_gline(char *nick, char *user, char *host, char *reason, time_t expire, time
+   return gline;
+ }
+ 
++/** This scans all users for the real host
++ * @param[in] host The host to parse
++ */
++static void 
++get_realhost(char **host) {
++  struct Client *acptr;	
++  int fd;   
++  /*
++   * checks G-line affects accounts!
++   */  
++  for (fd = HighestFd; fd >= 0; --fd) {
++    /*
++     * get the users!
++     */
++    if ((acptr = LocalClientArray[fd])) {
++      if (!cli_user(acptr))
++        continue;
++	  if (IsAccount(acptr)) { 
++	    if(match(*host, cli_user(acptr)->authhost)) {
++          return;
++		}
++	  }
++	}
++  }
++  /*
++   * G-lines the real host!
++   */  
++  for (fd = HighestFd; fd >= 0; --fd) {
++   /*
++   * get the users!
++   */  
++    if ((acptr = LocalClientArray[fd])) {
++      if (!cli_user(acptr))
++        continue;
++	  if (cli_user(acptr)->realhost && match(*host, cli_user(acptr)->host)) {
++	    *host = cli_user(acptr)->realhost; 
++		return;
++      }
++	}
++  }  
++}
++
+ /** Check local clients against a new G-line.
+  * If the G-line is inactive, return immediately.
+  * Otherwise, if any users match it, disconnect them or kick them if the G-line is a BADCHAN.
+@@ -256,19 +298,22 @@ do_gline(struct Client *cptr, struct Client *sptr, struct Gline *gline)
+           if (cli_name(acptr) &&
+               match(gline->gl_nick, cli_name(acptr)) !=0)
+             continue;
+-
+           if (cli_user(acptr)->username &&
+               match(gline->gl_user, (cli_user(acptr))->realusername) != 0)
+             continue;
+-
+           if (GlineIsIpMask(gline)) {
+             if (!ipmask_check(&cli_ip(acptr), &gline->gl_addr, gline->gl_bits))
+               continue;
+           }
+           else {
+-            if (match(gline->gl_host, cli_sockhost(acptr)) != 0)
++			if (match(gline->gl_host, cli_user(acptr)->host) != 0 && match(gline->gl_host, cli_sockhost(acptr)) != 0 && match(gline->gl_host, cli_user(acptr)->authhost) != 0)
+               continue;
+           }
++          if (IsAnOper(acptr) && FEAT_ENABLE_GLINE_OPER_EXCEPTION) {
++                    sendto_opmask_butone(0, SNO_GLINE, "G-line for %s ignored, nick is an oper...",
++                             cli_name(acptr));
++			continue;
++		  }
+         }
+ 
+         /* ok, here's one that got G-lined */
+@@ -420,11 +465,13 @@ gline_add(struct Client *cptr, struct Client *sptr, char *userhost,
+   char uhmask[NICKLEN + USERLEN + HOSTLEN + 3];
+   char *nick, *user, *host;
+   int tmp;
+-
++  
++  // Detects the real host
++  
+   assert(0 != userhost);
+   assert(0 != reason);
+ 
+-  if (*userhost == '#' || *userhost == '&') {
++  if (*userhost == '#' || *userhost == '&' || *userhost == '!') {
+     if ((flags & GLINE_LOCAL) && !HasPriv(sptr, PRIV_LOCAL_BADCHAN))
+       return send_reply(sptr, ERR_NOPRIVILEGES);
+ 
+@@ -449,7 +496,8 @@ gline_add(struct Client *cptr, struct Client *sptr, char *userhost,
+      user = (*userhost =='$' ? userhost : userhost+2);
+      host = 0;
+   } else {
+-    canon_userhost(userhost, &nick, &user, &host, "*");
++	canon_userhost(userhost, &nick, &user, &host, "*");
++	get_realhost(&host);
+     if (sizeof(uhmask) <
+ 	ircd_snprintf(0, uhmask, sizeof(uhmask), "%s@%s", user, host))
+       return send_reply(sptr, ERR_LONGMASK);
+@@ -698,7 +746,7 @@ gline_find(char *userhost, unsigned int flags)
+   }
+ 
+   if ((flags & (GLINE_BADCHAN | GLINE_ANY)) == GLINE_BADCHAN ||
+-      *userhost == '#' || *userhost == '&')
++      *userhost == '#' || *userhost == '&' || *userhost == '!')
+     return 0;
+ 
+   DupString(t_uh, userhost);
+@@ -795,13 +843,14 @@ gline_lookup(struct Client *cptr, unsigned int flags)
+         continue;
+       if (match(gline->gl_user, (cli_user(cptr))->realusername) != 0)
+         continue;
+-
++      if (IsAnOper(cptr) && FEAT_ENABLE_GLINE_OPER_EXCEPTION) 
++		continue;
+       if (GlineIsIpMask(gline)) {
+         if (!ipmask_check(&cli_ip(cptr), &gline->gl_addr, gline->gl_bits))
+           continue;
+       }
+       else {
+-        if (match(gline->gl_host, (cli_user(cptr))->realhost) != 0)
++          if (match(gline->gl_host, cli_user(cptr)->host) != 0 && match(gline->gl_host, cli_sockhost(cptr)) != 0 && match(gline->gl_host, cli_user(cptr)->authhost) != 0)
+           continue;
+       }
+     }
+@@ -1035,13 +1084,15 @@ IsNickGlined(struct Client *cptr, char *nick)
+ 
+     if (match(gline->gl_user, (cli_user(cptr))->username) != 0)
+       continue;
+-
++    if (IsAnOper(cptr) && FEAT_ENABLE_GLINE_OPER_EXCEPTION) {
++      continue;
++	}
+     if (GlineIsIpMask(gline)) {
+       if (!ipmask_check(&(cli_ip(cptr)), &gline->gl_addr, gline->gl_bits))
+         continue;
+     }
+     else {
+-      if (match(gline->gl_host, (cli_user(cptr))->realhost) != 0)
++        if (match(gline->gl_host, cli_user(cptr)->host) != 0 && match(gline->gl_host, cli_sockhost(cptr)) != 0 && match(gline->gl_host, cli_user(cptr)->authhost) != 0)
+         continue;
+     }
+     return gline;
+@@ -1050,5 +1101,4 @@ IsNickGlined(struct Client *cptr, char *nick)
+    * No Glines matched
+    */
+   return 0;
+-}
+-
++}
+\ No newline at end of file
 diff --git a/ircd/ircd.c b/ircd/ircd.c
 index c246aff..7c829cd 100644
 --- a/ircd/ircd.c
@@ -20452,10 +20629,18 @@ index c246aff..7c829cd 100644
      if (dbg_client)
        conf_debug_iline(dbg_client);
 diff --git a/ircd/ircd_features.c b/ircd/ircd_features.c
-index ffb14a5..ce36788 100644
+index ffb14a5..efa99a2 100644
 --- a/ircd/ircd_features.c
 +++ b/ircd/ircd_features.c
-@@ -353,6 +353,15 @@ static struct FeatureDesc {
+@@ -317,6 +317,7 @@ static struct FeatureDesc {
+   F_B(TOPIC_BURST, 0, 0, 0),
+   F_B(AUTOCHANMODES, 0, 1, 0),
+   F_S(AUTOCHANMODES_LIST, FEAT_CASE | FEAT_NULL, "ntCN", 0),
++  F_B(ENABLE_GLINE_OPER_EXCEPTION, 0, 0, 0),
+ 
+   /* features that probably should not be touched */
+   F_I(KILLCHASETIMELIMIT, 0, 30, 0),
+@@ -353,6 +354,15 @@ static struct FeatureDesc {
    F_I(IRCD_RES_TIMEOUT, 0, 4, 0),
    F_I(AUTH_TIMEOUT, 0, 9, 0),
    F_B(ANNOUNCE_INVITES, 0, 0, 0),
@@ -20471,7 +20656,7 @@ index ffb14a5..ce36788 100644
  
    /* features that affect all operators */
    F_B(EXTENDED_CHECKCMD, 0, 0, 0),
-@@ -361,6 +370,15 @@ static struct FeatureDesc {
+@@ -361,6 +371,15 @@ static struct FeatureDesc {
    F_B(SETHOST_USER, 0, 0, 0),
    F_B(SETHOST_AUTO, 0, 0, 0),
  
@@ -20921,10 +21106,38 @@ index cfa833c..fcfcd1f 100644
  #ifdef IPV6
    if (FlagHas(&listener->flags, LISTEN_IPV6)
 diff --git a/ircd/m_account.c b/ircd/m_account.c
-index 9ceae55..d96c507 100644
+index 9ceae55..5d43d34 100644
 --- a/ircd/m_account.c
 +++ b/ircd/m_account.c
-@@ -160,6 +160,9 @@ int ms_account(struct Client* cptr, struct Client* sptr, int parc,
+@@ -81,13 +81,19 @@
+ #include "config.h"
+ 
+ #include "client.h"
++#include "hash.h"
+ #include "ircd.h"
++#include "ircd_features.h"
+ #include "ircd_log.h"
+ #include "ircd_reply.h"
++#include "ircd_snprintf.h"
+ #include "ircd_string.h"
+ #include "msg.h"
++#include "numeric.h"
+ #include "numnicks.h"
++#include "s_conf.h"
+ #include "s_debug.h"
++#include "s_misc.h"
+ #include "s_user.h"
+ #include "send.h"
+ 
+@@ -108,6 +114,7 @@ int ms_account(struct Client* cptr, struct Client* sptr, int parc,
+ 	       char* parv[])
+ {
+   struct Client *acptr;
++  int killreason;
+ 
+   if (parc < 3)
+     return need_more_params(sptr, "ACCOUNT");
+@@ -160,6 +167,9 @@ int ms_account(struct Client* cptr, struct Client* sptr, int parc,
  
    ircd_strncpy(cli_user(acptr)->account, parv[2], ACCOUNTLEN);
    hide_hostmask(acptr, FLAG_ACCOUNT);
@@ -20934,6 +21147,21 @@ index 9ceae55..d96c507 100644
  
     if (cli_user(acptr)->acc_id) {
       sendcmdto_serv_butone(sptr, CMD_ACCOUNT, cptr, "%C %s %Tu %lu",
+@@ -175,5 +185,14 @@ int ms_account(struct Client* cptr, struct Client* sptr, int parc,
+                            acptr, cli_user(acptr)->account);
+    }
+ 
++  /* G-Line fix for accounts */
++   ircd_snprintf(0, cli_user(acptr)->authhost, HOSTLEN, "%s.%s", parv[2], feature_str(FEAT_HIDDEN_HOST));	
++   killreason = find_kill(acptr,1);
++   if (killreason)
++   {
++     ++ServerStats->is_ref;
++     return exit_client(acptr, acptr, cptr,
++                        (killreason == -1 ? "K-lined" : "G-lined"));
++   }
+   return 0;
+ }
 diff --git a/ircd/m_away.c b/ircd/m_away.c
 index e088a98..7faa5c6 100644
 --- a/ircd/m_away.c
@@ -21582,6 +21810,42 @@ index cce234b..ea92f1e 100644
    if (*aconf->passwd && !!strcmp(aconf->passwd, cli_passwd(cptr))) {
      ++ServerStats->is_ref;
      sendto_opmask_butone(0, SNO_OLDSNO, "Access denied (passwd mismatch) %s",
+diff --git a/ircd/m_sethost.c b/ircd/m_sethost.c
+index f95bc31..920a81c 100644
+--- a/ircd/m_sethost.c
++++ b/ircd/m_sethost.c
+@@ -89,6 +89,7 @@
+ #include "msgq.h"
+ #include "numeric.h"
+ #include "s_conf.h"
++#include "s_misc.h"
+ #include "s_user.h"
+ #include "s_debug.h"
+ #include "send.h"
+@@ -180,6 +181,7 @@ int ms_sethost(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
+   char hostmask[USERLEN + HOSTLEN + 2];
+   struct Membership *chan;
+   struct Flags setflags;
++  int killreason;
+ 
+   if (parc < 4)
+     return need_more_params(sptr, "SETHOST");
+@@ -250,6 +252,14 @@ int ms_sethost(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
+     }
+   }
+ 
+-  send_umode_out(target, target, &setflags, 0);
++  killreason = find_kill(target,1);
++  if (killreason)
++  {
++    ++ServerStats->is_ref;
++    return exit_client(target, target, sptr,
++                       (killreason == -1 ? "K-lined" : "G-lined"));
++  }
++  send_umode_out(target, target, &setflags, 0); 
++  
+   return 0;
+ }
 diff --git a/ircd/m_starttls.c b/ircd/m_starttls.c
 new file mode 100644
 index 0000000..4044d08
@@ -22298,7 +22562,7 @@ index 5d22a02..73bba65 100644
    }
  }
 diff --git a/ircd/s_conf.c b/ircd/s_conf.c
-index 95577f8..557d843 100644
+index 95577f8..debd16e 100644
 --- a/ircd/s_conf.c
 +++ b/ircd/s_conf.c
 @@ -158,6 +158,8 @@ void free_conf(struct ConfItem *aconf)
@@ -22310,6 +22574,35 @@ index 95577f8..557d843 100644
    MyFree(aconf);
    --GlobalConfCount;
  }
+@@ -1047,6 +1049,7 @@ int find_kill(struct Client *cptr, int glinecheck)
+   const char*      host;
+   const char*      name;
+   const char*      realname;
++  const char*      authhost;
+   struct DenyConf* deny;
+   struct Gline*    agline = NULL;
+ 
+@@ -1058,6 +1061,7 @@ int find_kill(struct Client *cptr, int glinecheck)
+   host = cli_sockhost(cptr);
+   name = cli_user(cptr)->username;
+   realname = cli_info(cptr);
++  authhost = cli_user(cptr)->authhost;
+ 
+   assert(strlen(host) <= HOSTLEN);
+   assert((name ? strlen(name) : 0) <= HOSTLEN);
+@@ -1074,8 +1078,11 @@ int find_kill(struct Client *cptr, int glinecheck)
+     if (deny->bits > 0) {
+       if (!ipmask_check(&cli_ip(cptr), &deny->address, deny->bits))
+         continue;
+-    } else if (deny->hostmask && match(deny->hostmask, host))
++    } else if (deny->hostmask && match(deny->hostmask, host)) {
+       continue;
++	} else if (deny->hostmask && match(deny->hostmask, authhost)) {
++      continue;
++    }
+ 
+     if (EmptyString(deny->message))
+       send_reply(cptr, SND_EXPLICIT | ERR_YOUREBANNEDCREEP,
 diff --git a/ircd/s_err.c b/ircd/s_err.c
 index 9ea3f41..07e240a 100644
 --- a/ircd/s_err.c
