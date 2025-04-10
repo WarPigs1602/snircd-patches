@@ -1,0 +1,2057 @@
+diff --git a/include/capab.h b/include/capab.h
+index 1303b0f..b030fe6 100644
+--- a/include/capab.h
++++ b/include/capab.h
+@@ -27,26 +27,42 @@
+ #include "client.h"
+ #endif
+ 
+-#define CAPFL_HIDDEN	0x0001	/**< Do not advertize this capability */
+-#define CAPFL_PROHIBIT	0x0002	/**< Client may not set this capability */
+-#define CAPFL_PROTO	0x0004	/**< Cap must be acknowledged by client */
++#ifndef INCLUDED_ircd_features_h
++#include "ircd_features.h"
++#endif
++
++#define CAPFL_HIDDEN    0x0001	/**< Do not advertize this capability */
++#define CAPFL_PROHIBIT  0x0002	/**< Client may not set this capability */
++#define CAPFL_PROTO     0x0004	/**< Cap must be acknowledged by client */
+ #define CAPFL_STICKY    0x0008  /**< Cap may not be cleared once set */
+ 
+ #define CAPLIST	\
+-	_CAP(USERPFX, 0, "undernet.org/userpfx")
++	_CAP(ACCOUNTNOTIFY, FEAT_CAP_ACCOUNTNOTIFY, 0, "account-notify"), \
++	_CAP(AWAYNOTIFY, FEAT_CAP_AWAYNOTIFY, 0 , "away-notify"), \
++	_CAP(CHGHOST, FEAT_CAP_CHGHOST, 0, "chghost"), \
++	_CAP(ECHOMESSAGE, FEAT_CAP_ECHOMESSAGE, 0, "echo-message"), \
++	_CAP(EXTJOIN, FEAT_CAP_EXTJOIN, 0, "extended-join"), \
++	_CAP(INVITENOTIFY, FEAT_CAP_INVITENOTIFY, 0, "invite-notify"), \
++	_CAP(SASL, FEAT_CAP_SASL, 0, "sasl")
+ 
+-/** Client capabilities */
++/** Client capabilities, counting by index. */
+ enum Capab {
+-#define _CAP(cap, flags, name)	CAP_ ## cap
++#define _CAP(cap, config, flags, name)	E_CAP_ ## cap
+   CAPLIST,
+ #undef _CAP
+-  _CAP_LAST_CAP
++  _E_CAP_LAST_CAP
+ };
+ 
+-DECLARE_FLAGSET(CapSet, _CAP_LAST_CAP);
++/** Client capabilities, bit mask version. */
++enum CapabBits {
++#define _CAP(cap, config, flags, name) CAP_ ## cap = 1u << E_CAP_ ## cap
++  CAPLIST,
++#undef _CAP
++  _CAP_LAST_CAP = 1u << _E_CAP_LAST_CAP
++};
+ 
+-#define CapHas(cs, cap)	FlagHas(cs, cap)
+-#define CapSet(cs, cap)	FlagSet(cs, cap)
+-#define CapClr(cs, cap)	FlagClr(cs, cap)
++#define CapHas(cs, cap)	(cs & cap)
++#define CapSet(cs, cap)	(cs |= cap)
++#define CapClr(cs, cap)	(cs &= ~cap)
+ 
+ #endif /* INCLUDED_capab_h */
+diff --git a/include/client.h b/include/client.h
+index 4da341e..c7d2896 100644
+--- a/include/client.h
++++ b/include/client.h
+@@ -65,6 +65,9 @@ struct AuthRequest;
+  * source file, or in the source file itself (when only used in that file).
+  */
+ 
++/** Value to hold a set of capability bits (from capab.h). */
++typedef unsigned short capset_t;
++
+ /** Single element in a flag bitset array. */
+ typedef unsigned long flagpage_t;
+ 
+@@ -246,8 +249,8 @@ struct Connection
+   struct Timer        con_proc;      /**< process latent messages from
+                                       client */
+   struct Privs        con_privs;     /**< Oper privileges */
+-  struct CapSet       con_capab;     /**< Client capabilities (from us) */
+-  struct CapSet       con_active;    /**< Active capabilities (to us) */
++  capset_t            con_capab;     /**< Client capabilities (from us) */
++  capset_t            con_active;    /**< Active capabilities (to us) */
+   struct AuthRequest* con_auth;      /**< Auth request for client */
+ };
+ 
+@@ -468,9 +471,9 @@ struct Client {
+ /** Get the oper privilege set for the connection. */
+ #define con_privs(con)          (&(con)->con_privs)
+ /** Get the peer's capabilities for the connection. */
+-#define con_capab(con)          (&(con)->con_capab)
++#define con_capab(con)          ((con)->con_capab)
+ /** Get the active capabilities for the connection. */
+-#define con_active(con)         (&(con)->con_active)
++#define con_active(con)         ((con)->con_active)
+ /** Get the auth request for the connection. */
+ #define con_auth(con)		((con)->con_auth)
+ 
+diff --git a/include/handlers.h b/include/handlers.h
+index a468201..d6c0fb9 100644
+--- a/include/handlers.h
++++ b/include/handlers.h
+@@ -137,6 +137,7 @@ extern int m_proto(struct Client*, struct Client*, int, char*[]);
+ extern int m_pseudo(struct Client*, struct Client*, int, char*[]);
+ extern int m_quit(struct Client*, struct Client*, int, char*[]);
+ extern int m_registered(struct Client*, struct Client*, int, char*[]);
++extern int m_sasl(struct Client*, struct Client*, int, char*[]);
+ extern int m_sethost(struct Client*, struct Client*, int, char*[]);
+ extern int m_silence(struct Client*, struct Client*, int, char*[]);
+ extern int m_stats(struct Client*, struct Client*, int, char*[]);
+diff --git a/include/ircd_features.h b/include/ircd_features.h
+index 9118f7c..f2fb73b 100644
+--- a/include/ircd_features.h
++++ b/include/ircd_features.h
+@@ -107,6 +107,15 @@ enum Feature {
+   FEAT_SETHOST,
+   FEAT_SETHOST_USER,
+   FEAT_SETHOST_AUTO,
++  
++  /* IRCv3 capabilities */
++  FEAT_CAP_ACCOUNTNOTIFY,
++  FEAT_CAP_AWAYNOTIFY,
++  FEAT_CAP_CHGHOST,
++  FEAT_CAP_ECHOMESSAGE,
++  FEAT_CAP_EXTJOIN,
++  FEAT_CAP_INVITENOTIFY,
++  FEAT_CAP_SASL,
+ 
+   /* HEAD_IN_SAND Features */
+   FEAT_HIS_SNOTICES,
+diff --git a/include/msg.h b/include/msg.h
+index f0ebe3c..8805ed4 100644
+--- a/include/msg.h
++++ b/include/msg.h
+@@ -367,6 +367,14 @@ struct Client;
+ #define TOK_CAP			"CAP"
+ #define CMD_CAP			MSG_CAP, TOK_CAP
+ 
++#define MSG_AUTHENTICATE	"AUTHENTICATE"
++#define TOK_AUTHENTICATE	"AUTHENTICATE"
++#define CMD_AUTHENTICATE	MSG_AUTHENTICATE, TOK_AUTHENTICATE
++
++#define MSG_CHGHOST	"CHGHOST"
++#define TOK_CHGHOST	"CHGHOST"
++#define CMD_CHGHOST	MSG_CHGHOST, TOK_CHGHOST
++
+ /*
+  * Constants
+  */
+diff --git a/include/numeric.h b/include/numeric.h
+index 338920c..ff214fe 100644
+--- a/include/numeric.h
++++ b/include/numeric.h
+@@ -473,7 +473,17 @@ extern const struct Numeric* get_error_numeric(int err);
+ /*      ERR_NOMANAGER_LONG   565	no longer used */
+ #define ERR_NOMANAGER        566	/* Undernet extension */
+ #define ERR_UPASS_SAME_APASS 567        /* Undernet extension */
+-#define ERR_LASTERROR        568
++#define RPL_LOGGEDIN         900    /* IRCv3 */
++#define RPL_LOGGEDOUT        901    /* IRCv3 */
++#define ERR_NICKLOCKED       902    /* IRCv3 */
++#define RPL_SASLSUCCESS      903    /* IRCv3 */
++#define ERR_SASLFAIL         904    /* IRCv3 */
++#define ERR_SASLTOOLONG      905    /* IRCv3 */
++#define ERR_SASLABORTED      906    /* IRCv3 */
++#define ERR_SASLALREADY      907    /* IRCv3 */
++#define RPL_SASLMECHS        908
++#define ERR_CANNOTCHANGECHANMODE 974    /* IRCv3 */
++#define ERR_LASTERROR        999
+ 
+ /*	RPL_LOGON	     600	dalnet,unreal
+ 	RPL_LOGOFF           601	dalnet,unreal
+diff --git a/include/s_auth.h b/include/s_auth.h
+index ce25827..1784144 100644
+--- a/include/s_auth.h
++++ b/include/s_auth.h
+@@ -49,6 +49,7 @@ extern void auth_mark_closing(void);
+ extern void auth_close_unused(void);
+ extern void report_iauth_conf(struct Client *cptr, const struct StatDesc *sd, char *param);
+ extern void report_iauth_stats(struct Client *cptr, const struct StatDesc *sd, char *param);
++extern int auth_set_sasl(struct AuthRequest *auth, const char *crypt);
+ 
+ #endif /* INCLUDED_s_auth_h */
+ 
+diff --git a/include/s_user.h b/include/s_user.h
+index 901a1b0..a03d5b5 100644
+--- a/include/s_user.h
++++ b/include/s_user.h
+@@ -112,5 +112,6 @@ extern int send_supported(struct Client *cptr);
+ #define NAMES_DEL 8 /**< Show delayed joined users only */
+ 
+ void do_names(struct Client* sptr, struct Channel* chptr, int filter);
++extern int register_sasl(struct Client* cptr, struct Client* sptr, int parc, char* parv[]);
+ 
+ #endif /* INCLUDED_s_user_h */
+diff --git a/include/send.h b/include/send.h
+index 209bc6c..3e1cd7e 100644
+--- a/include/send.h
++++ b/include/send.h
+@@ -13,6 +13,10 @@
+ #define INCLUDED_time_h
+ #endif
+ 
++#ifndef INCLUDED_client_h
++#include "client.h" /* capset_t */
++#endif
++
+ struct Channel;
+ struct Client;
+ struct DBuf;
+@@ -127,4 +131,30 @@ extern void sendto_opmask_butone_ratelimited(struct Client *one,
+ extern void vsendto_opmask_butone(struct Client *one, unsigned int mask,
+ 				  const char *pattern, va_list vl);
+ 
++/* Send command to all channels user is on matching or not matching a capability flag */
++extern void sendcmdto_capflag_common_channels_butone(struct Client *from,
++						     const char *cmd,
++						     const char *tok,
++						     struct Client *one,
++						     capset_t require,
++						     capset_t forbid,
++						     const char *pattern, ...);
++
++/* Send command to all channel users on this server matching or not matching a capability flag */
++void sendcmdto_capflag_channel_butserv_butone(struct Client *from, const char *cmd,
++					      const char *tok, struct Channel *to,
++					      struct Client *one, unsigned int skip,
++					      capset_t require, capset_t forbid,
++					      const char *pattern, ...);
++						  
++/* Send JOIN to all local channel users matching or not matching capability flags */
++extern void sendjointo_channel_butserv(struct Client *from,
++				       struct Channel *chptr,
++				       capset_t require,
++				       capset_t forbid);
++
++/* Send JOIN to a single user */
++extern void sendjointo_one(struct Client *from,
++			   struct Channel *chptr,
++			   struct Client *one);						  
+ #endif /* INCLUDED_send_h */
+diff --git a/ircd/Makefile.in b/ircd/Makefile.in
+index 01a5ea6..b076c72 100644
+--- a/ircd/Makefile.in
++++ b/ircd/Makefile.in
+@@ -166,6 +166,7 @@ IRCD_SRC = \
+ 	m_restart.c \
+ 	m_rping.c \
+ 	m_rpong.c \
++	m_sasl.c \
+ 	m_server.c \
+ 	m_set.c \
+ 	m_sethost.c \
+diff --git a/ircd/channel.c b/ircd/channel.c
+index fdb3c25..23a237d 100644
+--- a/ircd/channel.c
++++ b/ircd/channel.c
+@@ -3621,7 +3621,10 @@ joinbuf_join(struct JoinBuf *jbuf, struct Channel *chan, unsigned int flags)
+ 
+     if (!((chan->mode.mode & MODE_DELJOINS) && !(flags & CHFL_VOICED_OR_OPPED))) {
+       /* Send the notification to the channel */
+-      sendcmdto_channel_butserv_butone(jbuf->jb_source, CMD_JOIN, chan, NULL, 0, "%H", chan);
++      sendjointo_channel_butserv(jbuf->jb_source, chan, 0, 0);
++      if (cli_user(jbuf->jb_source)->away)
++        sendcmdto_capflag_common_channels_butone(jbuf->jb_source, CMD_AWAY, jbuf->jb_connect,
++          CAP_AWAYNOTIFY, 0, ":%s", cli_user(jbuf->jb_source)->away);
+ 
+       /* send an op, too, if needed */
+       if (flags & CHFL_CHANOP && (oplevel < MAXOPLEVEL || !MyUser(jbuf->jb_source)))
+@@ -3629,7 +3632,7 @@ joinbuf_join(struct JoinBuf *jbuf, struct Channel *chan, unsigned int flags)
+                                          CMD_MODE, chan, NULL, 0, "%H +o %C",
+ 					 chan, jbuf->jb_source);
+     } else if (MyUser(jbuf->jb_source))
+-      sendcmdto_one(jbuf->jb_source, CMD_JOIN, jbuf->jb_source, ":%H", chan);
++      sendjointo_one(jbuf->jb_source, chan, jbuf->jb_source);
+   }
+ 
+   if (jbuf->jb_type == JOINBUF_TYPE_PARTALL ||
+@@ -3722,8 +3725,10 @@ int IsInvited(struct Client* cptr, const void* chptr)
+ void RevealDelayedJoin(struct Membership *member)
+ {
+   ClearDelayedJoin(member);
+-  sendcmdto_channel_butserv_butone(member->user, CMD_JOIN, member->channel, member->user, 0, ":%H",
+-                                   member->channel);
++  sendjointo_channel_butserv(member->user, member->channel, 0, 0);
++  if (cli_user(member->user)->away)
++    sendcmdto_capflag_channel_butserv_butone(member->user, CMD_AWAY, member->channel,
++      NULL, 0, CAP_AWAYNOTIFY, 0, ":%s", cli_user(member->user)->away);
+   CheckDelayedJoins(member->channel);
+ }
+ 
+diff --git a/ircd/ircd_features.c b/ircd/ircd_features.c
+index ffb14a5..fe7515b 100644
+--- a/ircd/ircd_features.c
++++ b/ircd/ircd_features.c
+@@ -361,6 +361,15 @@ static struct FeatureDesc {
+   F_B(SETHOST_USER, 0, 0, 0),
+   F_B(SETHOST_AUTO, 0, 0, 0),
+ 
++  /* IRCv3 capabilities */
++  F_B(CAP_ACCOUNTNOTIFY, 0, 1, 0),
++  F_B(CAP_AWAYNOTIFY, 0, 1, 0),
++  F_B(CAP_CHGHOST, 0, 1, 0),
++  F_B(CAP_ECHOMESSAGE, 0, 1, 0),
++  F_B(CAP_EXTJOIN, 0, 1, 0),
++  F_B(CAP_INVITENOTIFY, 0, 1, 0),
++  F_B(CAP_SASL, 0, 1, 0), 
++
+   /* HEAD_IN_SAND Features */
+   F_B(HIS_SNOTICES, 0, 1, 0),
+   F_B(HIS_SNOTICES_OPER_ONLY, 0, 1, 0),
+diff --git a/ircd/ircd_relay.c b/ircd/ircd_relay.c
+index 30f8f74..726cdd1 100644
+--- a/ircd/ircd_relay.c
++++ b/ircd/ircd_relay.c
+@@ -131,6 +131,9 @@ void relay_channel_message(struct Client* sptr, const char* name, const char* te
+   
+   sendcmdto_channel_butone(sptr, CMD_PRIVATE, chptr, cli_from(sptr),
+ 			   SKIP_DEAF | SKIP_BURST, "%H :%s", chptr, text);
++
++  if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
++    sendcmdto_one(sptr, CMD_PRIVATE, cli_from(sptr), "%H :%s", chptr, text);
+ }
+ 
+ /** Relay a local user's notice to a channel.
+@@ -180,6 +183,9 @@ void relay_channel_notice(struct Client* sptr, const char* name, const char* tex
+ 
+   sendcmdto_channel_butone(sptr, CMD_NOTICE, chptr, cli_from(sptr),
+ 			   SKIP_DEAF | SKIP_BURST, "%H :%s", chptr, text);
++
++  if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
++    sendcmdto_one(sptr, CMD_NOTICE, cli_from(sptr), "%H :%s", chptr, text);			   
+ }
+ 
+ /** Relay a message to a channel.
+@@ -268,6 +274,9 @@ void relay_directed_message(struct Client* sptr, char* name, char* server, const
+   if (!IsMe(acptr))
+   {
+     sendcmdto_one(sptr, CMD_PRIVATE, acptr, "%s :%s", name, text);
++	
++    if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
++      sendcmdto_one(sptr, CMD_PRIVATE, cli_from(sptr), "%s :%s", name, text);	
+     return;
+   }
+   /*
+@@ -305,7 +314,12 @@ void relay_directed_message(struct Client* sptr, char* name, char* server, const
+     *--host = '%';
+ 
+   if (!(is_silenced(sptr, acptr)))
++  {
+     sendcmdto_one(sptr, CMD_PRIVATE, acptr, "%s :%s", name, text);
++
++    if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
++      sendcmdto_one(sptr, CMD_PRIVATE, cli_from(sptr), "%s :%s", name, text);
++  }
+ }
+ 
+ /** Relay a directed notice.
+@@ -334,6 +348,9 @@ void relay_directed_notice(struct Client* sptr, char* name, char* server, const
+    */
+   if (!IsMe(acptr)) {
+     sendcmdto_one(sptr, CMD_NOTICE, acptr, "%s :%s", name, text);
++
++    if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
++      sendcmdto_one(sptr, CMD_NOTICE, cli_from(sptr), "%s :%s", name, text);	
+     return;
+   }
+   /*
+@@ -354,7 +371,12 @@ void relay_directed_notice(struct Client* sptr, char* name, char* server, const
+     *--host = '%';
+ 
+   if (!(is_silenced(sptr, acptr)))
++  {
+     sendcmdto_one(sptr, CMD_NOTICE, acptr, "%s :%s", name, text);
++
++    if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
++      sendcmdto_one(sptr, CMD_NOTICE, cli_from(sptr), "%s :%s", name, text);
++  }
+ }
+ 
+ /** Relay a private message from a local user.
+@@ -404,6 +426,9 @@ void relay_private_message(struct Client* sptr, const char* name, const char* te
+     add_target(acptr, sptr);
+ 
+   sendcmdto_one(sptr, CMD_PRIVATE, acptr, "%C :%s", acptr, text);
++
++  if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
++    sendcmdto_one(sptr, CMD_PRIVATE, cli_from(sptr), "%C :%s", acptr, text);  
+ }
+ 
+ /** Relay a private notice from a local user.
+@@ -443,6 +468,9 @@ void relay_private_notice(struct Client* sptr, const char* name, const char* tex
+     add_target(acptr, sptr);
+ 
+   sendcmdto_one(sptr, CMD_NOTICE, acptr, "%C :%s", acptr, text);
++
++  if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
++    sendcmdto_one(sptr, CMD_NOTICE, cli_from(sptr), "%C :%s", acptr, text);
+ }
+ 
+ /** Relay a private message that arrived from a server.
+@@ -543,6 +571,9 @@ void relay_masked_message(struct Client* sptr, const char* mask, const char* tex
+ 			 IsServer(cli_from(sptr)) ? cli_from(sptr) : 0,
+ 			 host_mask ? MATCH_HOST : MATCH_SERVER,
+ 			 "%s :%s", mask, text);
++
++  if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
++    sendcmdto_one(sptr, CMD_PRIVATE, cli_from(sptr), "%s :%s", mask, text);
+ }
+ 
+ /** Relay a masked notice from a local user.
+@@ -585,6 +616,9 @@ void relay_masked_notice(struct Client* sptr, const char* mask, const char* text
+ 			 IsServer(cli_from(sptr)) ? cli_from(sptr) : 0,
+ 			 host_mask ? MATCH_HOST : MATCH_SERVER,
+ 			 "%s :%s", mask, text);
++
++  if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
++    sendcmdto_one(sptr, CMD_NOTICE, cli_from(sptr), "%s :%s", mask, text);
+ }
+ 
+ /** Relay a masked message that arrived from a server.
+diff --git a/ircd/m_account.c b/ircd/m_account.c
+index 9ceae55..1a83da8 100644
+--- a/ircd/m_account.c
++++ b/ircd/m_account.c
+@@ -159,6 +159,8 @@ int ms_account(struct Client* cptr, struct Client* sptr, int parc,
+   }
+ 
+   ircd_strncpy(cli_user(acptr)->account, parv[2], ACCOUNTLEN);
++    sendcmdto_capflag_common_channels_butone(acptr, CMD_ACCOUNT, NULL, CAP_ACCOUNTNOTIFY,
++                          0, "%s", cli_user(acptr)->account);
+   hide_hostmask(acptr, FLAG_ACCOUNT);
+ 
+    if (cli_user(acptr)->acc_id) {
+diff --git a/ircd/m_away.c b/ircd/m_away.c
+index e088a98..89e1e66 100644
+--- a/ircd/m_away.c
++++ b/ircd/m_away.c
+@@ -161,12 +161,17 @@ int m_away(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
+ 
+   if (user_set_away(cli_user(sptr), away_message))
+   {
+-    if (!was_away)    
++    if (!was_away)
++    {
+       sendcmdto_serv_butone(sptr, CMD_AWAY, cptr, ":%s", away_message);
++      sendcmdto_capflag_common_channels_butone(sptr, CMD_AWAY, cptr, CAP_AWAYNOTIFY, 0, ":%s", away_message);
++    }
++
+     send_reply(sptr, RPL_NOWAWAY);
+   }
+   else {
+     sendcmdto_serv_butone(sptr, CMD_AWAY, cptr, "");
++    sendcmdto_capflag_common_channels_butone(sptr, CMD_AWAY, cptr, CAP_AWAYNOTIFY, 0, "");
+     send_reply(sptr, RPL_UNAWAY);
+   }
+   return 0;
+diff --git a/ircd/m_burst.c b/ircd/m_burst.c
+index 54a442e..f00b8b5 100644
+--- a/ircd/m_burst.c
++++ b/ircd/m_burst.c
+@@ -551,8 +551,12 @@ int ms_burst(struct Client *cptr, struct Client *sptr, int parc, char *parv[])
+ 	  if (!(member = find_member_link(chptr, acptr)))
+ 	  {
+ 	    add_user_to_channel(chptr, acptr, current_mode, oplevel);
+-            if (!(current_mode & CHFL_DELAYED))
+-              sendcmdto_channel_butserv_butone(acptr, CMD_JOIN, chptr, NULL, 0, "%H", chptr);
++	    if (!(current_mode & CHFL_DELAYED)) {
++	      sendjointo_channel_butserv(acptr, chptr, 0, 0);
++              if (cli_user(acptr)->away)
++                sendcmdto_capflag_channel_butserv_butone(acptr, CMD_AWAY, chptr,
++                  NULL, 0, CAP_AWAYNOTIFY, 0, ":%s", cli_user(acptr)->away);
++              }
+ 	  }
+ 	  else
+ 	  {
+diff --git a/ircd/m_cap.c b/ircd/m_cap.c
+index edf60fe..8b285d4 100644
+--- a/ircd/m_cap.c
++++ b/ircd/m_cap.c
+@@ -45,14 +45,15 @@
+ typedef int (*bqcmp)(const void *, const void *);
+ 
+ static struct capabilities {
+-  enum Capab cap;
++  enum CapabBits cap;
+   char *capstr;
++  unsigned int config;
+   unsigned long flags;
+   char *name;
+   int namelen;
+ } capab_list[] = {
+-#define _CAP(cap, flags, name)						      \
+-	{ CAP_ ## cap, #cap, (flags), (name), sizeof(name) - 1 }
++#define _CAP(cap, config, flags, name)      \
++	{ CAP_ ## cap, #cap, (config), (flags), (name), sizeof(name) - 1 }
+   CAPLIST
+ #undef _CAP
+ };
+@@ -137,18 +138,27 @@ find_cap(const char **caplist_p, int *neg_p)
+  * @param[in] subcmd Name of capability subcommand.
+  */
+ static int
+-send_caplist(struct Client *sptr, const struct CapSet *set,
+-             const struct CapSet *rem, const char *subcmd)
++send_caplist(struct Client *sptr, capset_t set,
++             capset_t rem, const char *subcmd)
+ {
+   char capbuf[BUFSIZE] = "", pfx[16];
+   struct MsgBuf *mb;
+   int i, loc, len, flags, pfx_len;
+ 
+   /* set up the buffer for the final LS message... */
+-  mb = msgq_make(sptr, "%:#C " MSG_CAP " %s :", &me, subcmd);
++  mb = msgq_make(sptr, "%:#C " MSG_CAP " %C %s :", &me, sptr, subcmd);
+ 
+   for (i = 0, loc = 0; i < CAPAB_LIST_LEN; i++) {
+     flags = capab_list[i].flags;
++
++    /* If the client has no capabilities set, and this is the LIST subcmd, break. */
++    if (!set && !strcmp(subcmd, "LIST"))
++      break;
++
++    /* Check if the capability is enabled in features() */
++    if (!feature_bool(capab_list[i].config))
++      continue;
++
+     /* This is a little bit subtle, but just involves applying de
+      * Morgan's laws to the obvious check: We must display the
+      * capability if (and only if) it is set in \a rem or \a set, or
+@@ -175,7 +185,7 @@ send_caplist(struct Client *sptr, const struct CapSet *set,
+ 
+     len = capab_list[i].namelen + pfx_len; /* how much we'd add... */
+     if (msgq_bufleft(mb) < loc + len + 2) { /* would add too much; must flush */
+-      sendcmdto_one(&me, CMD_CAP, sptr, "%s * :%s", subcmd, capbuf);
++      sendcmdto_one(&me, CMD_CAP, sptr, "%C %s * :%s", sptr, subcmd, capbuf);
+       capbuf[(loc = 0)] = '\0'; /* re-terminate the buffer... */
+     }
+ 
+@@ -193,7 +203,7 @@ send_caplist(struct Client *sptr, const struct CapSet *set,
+ static int
+ cap_ls(struct Client *sptr, const char *caplist)
+ {
+-  if (IsUnknown(sptr)) /* registration hasn't completed; suspend it... */
++  if (IsUserPort(sptr)) /* registration hasn't completed; suspend it... */
+     auth_cap_start(cli_auth(sptr));
+   return send_caplist(sptr, 0, 0, "LS"); /* send list of capabilities */
+ }
+@@ -203,43 +213,42 @@ cap_req(struct Client *sptr, const char *caplist)
+ {
+   const char *cl = caplist;
+   struct capabilities *cap;
+-  struct CapSet set, rem;
+-  struct CapSet cs = *cli_capab(sptr); /* capability set */
+-  struct CapSet as = *cli_active(sptr); /* active set */
++  capset_t set = 0, rem = 0;
++  capset_t cs = cli_capab(sptr); /* capability set */
++  capset_t as = cli_active(sptr); /* active set */
+   int neg;
+ 
+-  if (IsUnknown(sptr)) /* registration hasn't completed; suspend it... */
++  if (IsUserPort(sptr)) /* registration hasn't completed; suspend it... */
+     auth_cap_start(cli_auth(sptr));
+ 
+-  memset(&set, 0, sizeof(set));
+-  memset(&rem, 0, sizeof(rem));
+   while (cl) { /* walk through the capabilities list... */
+     if (!(cap = find_cap(&cl, &neg)) /* look up capability... */
+-	|| (!neg && (cap->flags & CAPFL_PROHIBIT)) /* is it prohibited? */
++        || !feature_bool(cap->config) /* is it deactivated in config? */
++        || (!neg && (cap->flags & CAPFL_PROHIBIT)) /* is it prohibited? */
+         || (neg && (cap->flags & CAPFL_STICKY))) { /* is it sticky? */
+-      sendcmdto_one(&me, CMD_CAP, sptr, "NAK :%s", caplist);
++      sendcmdto_one(&me, CMD_CAP, sptr, "%C NAK :%s", sptr, caplist);
+       return 0; /* can't complete requested op... */
+     }
+ 
+     if (neg) { /* set or clear the capability... */
+-      CapSet(&rem, cap->cap);
+-      CapClr(&set, cap->cap);
+-      CapClr(&cs, cap->cap);
++      CapSet(rem, cap->cap);
++      CapClr(set, cap->cap);
++      CapClr(cs, cap->cap);
+       if (!(cap->flags & CAPFL_PROTO))
+-	CapClr(&as, cap->cap);
++	CapClr(as, cap->cap);
+     } else {
+-      CapClr(&rem, cap->cap);
+-      CapSet(&set, cap->cap);
+-      CapSet(&cs, cap->cap);
++      CapClr(rem, cap->cap);
++      CapSet(set, cap->cap);
++      CapSet(cs, cap->cap);
+       if (!(cap->flags & CAPFL_PROTO))
+-	CapSet(&as, cap->cap);
++	CapSet(as, cap->cap);
+     }
+   }
+ 
+   /* Notify client of accepted changes and copy over results. */
+-  send_caplist(sptr, &set, &rem, "ACK");
+-  *cli_capab(sptr) = cs;
+-  *cli_active(sptr) = as;
++  send_caplist(sptr, set, rem, "ACK");
++  cli_capab(sptr) = cs;
++  cli_active(sptr) = as;
+ 
+   return 0;
+ }
+@@ -260,10 +269,15 @@ cap_ack(struct Client *sptr, const char *caplist)
+ 	(neg ? HasCap(sptr, cap->cap) : !HasCap(sptr, cap->cap))) /* uh... */
+       continue;
+ 
+-    if (neg) /* set or clear the active capability... */
++    if (neg) { /* set or clear the active capability... */
++      if (cap->flags & CAPFL_STICKY)
++        continue; /* but don't clear sticky capabilities */
+       CapClr(cli_active(sptr), cap->cap);
+-    else
++    } else {
++      if (cap->flags & CAPFL_PROHIBIT)
++        continue; /* and don't set prohibited ones */
+       CapSet(cli_active(sptr), cap->cap);
++    }
+   }
+ 
+   return 0;
+@@ -272,24 +286,23 @@ cap_ack(struct Client *sptr, const char *caplist)
+ static int
+ cap_clear(struct Client *sptr, const char *caplist)
+ {
+-  struct CapSet cleared;
++  capset_t cleared = 0;
+   struct capabilities *cap;
+   unsigned int ii;
+ 
+   /* XXX: If we ever add a capab list sorted by capab value, it would
+    * be good cache-wise to use it here. */
+-  memset(&cleared, 0, sizeof(cleared));
+   for (ii = 0; ii < CAPAB_LIST_LEN; ++ii) {
+     cap = &capab_list[ii];
+     /* Only clear active non-sticky capabilities. */
+     if (!HasCap(sptr, cap->cap) || (cap->flags & CAPFL_STICKY))
+       continue;
+-    CapSet(&cleared, cap->cap);
++    CapSet(cleared, cap->cap);
+     CapClr(cli_capab(sptr), cap->cap);
+     if (!(cap->flags & CAPFL_PROTO))
+       CapClr(cli_active(sptr), cap->cap);
+   }
+-  send_caplist(sptr, 0, &cleared, "ACK");
++  send_caplist(sptr, 0, cleared, "ACK");
+ 
+   return 0;
+ }
+@@ -297,7 +310,7 @@ cap_clear(struct Client *sptr, const char *caplist)
+ static int
+ cap_end(struct Client *sptr, const char *caplist)
+ {
+-  if (!IsUnknown(sptr)) /* registration has completed... */
++  if (!IsUserPort(sptr)) /* registration has completed... */
+     return 0; /* so just ignore the message... */
+ 
+   return auth_cap_done(cli_auth(sptr));
+diff --git a/ircd/m_destruct.c b/ircd/m_destruct.c
+index 5bcbd85..a67ccc2 100644
+--- a/ircd/m_destruct.c
++++ b/ircd/m_destruct.c
+@@ -153,7 +153,7 @@ int ms_destruct(struct Client* cptr, struct Client* sptr, int parc, char* parv[]
+ 
+     /* Next, send JOINs for all members. */
+     for (member = chptr->members; member; member = member->next_member)
+-      sendcmdto_one(member->user, CMD_JOIN, cptr, "%H", chptr);
++      sendjointo_one(member->user, chptr, cptr);
+ 
+     /* Build MODE strings. We use MODEBUF_DEST_BOUNCE with MODE_DEL to assure
+        that the resulting MODEs are only sent upstream. */
+diff --git a/ircd/m_invite.c b/ircd/m_invite.c
+index 7a121ec..ee68345 100644
+--- a/ircd/m_invite.c
++++ b/ircd/m_invite.c
+@@ -188,12 +188,22 @@ int m_invite(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
+   }
+ 
+   if (!IsLocalChannel(chptr->chname) || MyConnect(acptr)) {
++    /*
++     * Announce to channel operators with CAP_INVITENOTIFY enabled.
++     * We do this irrespective of whether FEAT_ANNOUNCE_INVITES is enabled.
++     */
++    sendcmdto_capflag_channel_butserv_butone(sptr, CMD_INVITE,
++                                             chptr, sptr, SKIP_NONOPS,
++                                             CAP_INVITENOTIFY, 0,
++                                             "%C %H", acptr, chptr);
++
+     if (feature_bool(FEAT_ANNOUNCE_INVITES)) {
+-      /* Announce to channel operators. */
+-      sendcmdto_channel_butserv_butone(&his, get_error_numeric(RPL_ISSUEDINVITE)->str,
+-                                       NULL, chptr, sptr, SKIP_NONOPS,
+-                                       "%H %C %C :%C has been invited by %C",
+-                                       chptr, acptr, sptr, acptr, sptr);
++      /* Announce to channel operators without CAP_INVITENOTIFY enabled. */
++      sendcmdto_capflag_channel_butserv_butone(&his, get_error_numeric(RPL_ISSUEDINVITE)->str,
++                                               NULL, chptr, sptr, SKIP_NONOPS,
++                                               0, CAP_INVITENOTIFY,
++                                               "%H %C %C :%C has been invited by %C",
++                                               chptr, acptr, sptr, acptr, sptr);
+       /* Announce to servers with channel operators. */
+       sendcmdto_channel_servers_butone(sptr, NULL, TOK_INVITE, chptr, acptr, SKIP_NONOPS,
+                                        "%s %H %Tu", cli_name(acptr),
+@@ -292,12 +302,19 @@ int ms_invite(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
+                   chptr->creationtime);
+   }
+ 
++  /* Announce to channel operators with CAP_NOTIFY enabled. */
++  sendcmdto_capflag_channel_butserv_butone(sptr, CMD_INVITE,
++                                           chptr, sptr, SKIP_NONOPS,
++                                           CAP_INVITENOTIFY, 0,
++                                           "%C %H", acptr, chptr);
++
+   if (feature_bool(FEAT_ANNOUNCE_INVITES)) {
+-    /* Announce to channel operators. */
+-    sendcmdto_channel_butserv_butone(&his, get_error_numeric(RPL_ISSUEDINVITE)->str,
+-                                     NULL, chptr, sptr, SKIP_NONOPS,
+-                                     "%H %C %C :%C has been invited by %C",
+-                                     chptr, acptr, sptr, acptr, sptr);
++    /* Announce to channel operators without CAP_NOTIFY enabled. */
++    sendcmdto_capflag_channel_butserv_butone(&his, get_error_numeric(RPL_ISSUEDINVITE)->str,
++                                             NULL, chptr, sptr, SKIP_NONOPS,
++                                             0, CAP_INVITENOTIFY,
++                                             "%H %C %C :%C has been invited by %C",
++                                             chptr, acptr, sptr, acptr, sptr);
+     /* Announce to servers with channel operators. */
+     sendcmdto_channel_servers_butone(sptr, NULL, TOK_INVITE, chptr, acptr, SKIP_NONOPS,
+                                      "%s %H %Tu", cli_name(acptr), chptr,
+diff --git a/ircd/m_kick.c b/ircd/m_kick.c
+index 36299d4..e956c94 100644
+--- a/ircd/m_kick.c
++++ b/ircd/m_kick.c
+@@ -172,7 +172,7 @@ int m_kick(struct Client *cptr, struct Client *sptr, int parc, char *parv[])
+      * the kicking and the victim */
+     if (MyUser(who))
+       sendcmdto_one(sptr, CMD_KICK, who, "%H %C :%s", chptr, who, comment);
+-    sendcmdto_one(who, CMD_JOIN, sptr, "%H", chptr);
++    sendjointo_one(who, chptr, sptr);
+     sendcmdto_one(sptr, CMD_KICK, sptr, "%H %C :%s", chptr, who, comment);
+     CheckDelayedJoins(chptr);
+   } else
+@@ -234,7 +234,7 @@ int ms_kick(struct Client *cptr, struct Client *sptr, int parc, char *parv[])
+     sendto_opmask_butone(0, SNO_HACK2, "HACK: %C KICK %H %C %s", sptr, chptr,
+ 			 who, comment);
+ 
+-    sendcmdto_one(who, CMD_JOIN, cptr, "%H", chptr);
++    sendjointo_one(who, chptr, cptr);
+ 
+     /* Reop/revoice member */
+     if (IsChanOp(member) || HasVoice(member)) {
+diff --git a/ircd/m_sasl.c b/ircd/m_sasl.c
+new file mode 100644
+index 0000000..d917d2f
+--- /dev/null
++++ b/ircd/m_sasl.c
+@@ -0,0 +1,117 @@
++/*
++ * IRC - Internet Relay Chat, ircd/m_sasl.c
++ * Copyright (C) 2002 Alex Badea <vampire@p16.pub.ro>
++ *
++ * See file AUTHORS in IRC package for additional names of
++ * the programmers.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 1, or (at your option)
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ *
++ * $Id: m_sasl.c,v 1.3.2.1 2025/04/01 04:04:32 entrope Exp $
++ */
++
++/*
++ * m_functions execute protocol messages on this server:
++ *
++ *    cptr    is always NON-NULL, pointing to a *LOCAL* client
++ *            structure (with an open socket connected!). This
++ *            identifies the physical socket where the message
++ *            originated (or which caused the m_function to be
++ *            executed--some m_functions may call others...).
++ *
++ *    sptr    is the source of the message, defined by the
++ *            prefix part of the message if present. If not
++ *            or prefix not found, then sptr==cptr.
++ *
++ *            (!IsServer(cptr)) => (cptr == sptr), because
++ *            prefixes are taken *only* from servers...
++ *
++ *            (IsServer(cptr))
++ *                    (sptr == cptr) => the message didn't
++ *                    have the prefix.
++ *
++ *                    (sptr != cptr && IsServer(sptr) means
++ *                    the prefix specified servername. (?)
++ *
++ *                    (sptr != cptr && !IsServer(sptr) means
++ *                    that message originated from a remote
++ *                    user (not local).
++ *
++ *            combining
++ *
++ *            (!IsServer(sptr)) means that, sptr can safely
++ *            taken as defining the target structure of the
++ *            message in this server.
++ *
++ *    *Always* true (if 'parse' and others are working correct):
++ *
++ *    1)      sptr->from == cptr  (note: cptr->from == cptr)
++ *
++ *    2)      MyConnect(sptr) <=> sptr == cptr (e.g. sptr
++ *            *cannot* be a local connection, unless it's
++ *            actually cptr!). [MyConnect(x) should probably
++ *            be defined as (x == x->from) --msa ]
++ *
++ *    parc    number of variable parameter strings (if zero,
++ *            parv is allowed to be NULL)
++ *
++ *    parv    a NULL terminated list of parameter pointers,
++ *
++ *                    parv[0], sender (prefix string), if not present
++ *                            this points to an empty string.
++ *                    parv[1]...parv[parc-1]
++ *                            pointers to additional parameters
++ *                    parv[parc] == NULL, *always*
++ *
++ *            note:   it is guaranteed that parv[0]..parv[parc-1] are all
++ *                    non-NULL pointers.
++ */
++#include "config.h"
++
++#include "client.h"
++#include "hash.h"
++#include "ircd.h"
++#include "ircd_alloc.h"
++#include "ircd_features.h"
++#include "ircd_log.h"
++#include "ircd_relay.h"
++#include "ircd_reply.h"
++#include "ircd_string.h"
++#include "ircd_snprintf.h"
++#include "list.h"
++#include "msg.h"
++#include "numeric.h"
++#include "numnicks.h"
++#include "send.h"
++#include "s_auth.h"
++#include "s_conf.h"
++#include "s_misc.h"
++#include "s_user.h"
++
++/* #include <assert.h> -- Now using assert in ircd_log.h */
++#include <stdlib.h>
++#include <stdio.h>
++#include <stddef.h>
++
++/*
++ * m_sasl - client message handler
++ */
++int m_sasl(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
++{		
++  if (parc < 2 || *parv[1] == '\0')
++    return need_more_params(sptr, "AUTHENTICATE");	
++  register_sasl(cptr, sptr, parc, parv);
++  return 0;
++}
+\ No newline at end of file
+diff --git a/ircd/m_wallchops.c b/ircd/m_wallchops.c
+index db114ba..e7b485d 100644
+--- a/ircd/m_wallchops.c
++++ b/ircd/m_wallchops.c
+@@ -137,6 +137,9 @@ int m_wallchops(struct Client* cptr, struct Client* sptr, int parc, char* parv[]
+       sendcmdto_channel_butone(sptr, CMD_WALLCHOPS, chptr, cptr,
+ 			       SKIP_DEAF | SKIP_BURST | SKIP_NONOPS,
+ 			       "%H :@ %s", chptr, parv[parc - 1]);
++      if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
++        sendcmdto_one(sptr, CMD_NOTICE, cli_from(sptr), // Sending CMD_NOTICE since CMD_WALLCHOPS is translated into CMD_NOTICE in sendcmdto_channel_butone()
++                "@%H :@ %s", chptr, parv[parc - 1]);
+     }
+     else
+       send_reply(sptr, ERR_CANNOTSENDTOCHAN, parv[1]);
+diff --git a/ircd/m_wallvoices.c b/ircd/m_wallvoices.c
+index 292b1f2..3ae4be0 100644
+--- a/ircd/m_wallvoices.c
++++ b/ircd/m_wallvoices.c
+@@ -136,6 +136,9 @@ int m_wallvoices(struct Client* cptr, struct Client* sptr, int parc, char* parv[
+       sendcmdto_channel_butone(sptr, CMD_WALLVOICES, chptr, cptr,
+ 			       SKIP_DEAF | SKIP_BURST | SKIP_NONVOICES, 
+ 			       "%H :+ %s", chptr, parv[parc - 1]);
++      if (CapHas(cli_active(sptr), CAP_ECHOMESSAGE))
++        sendcmdto_one(sptr, CMD_NOTICE, cli_from(sptr), // Sending CMD_NOTICE since CMD_WALLVOICES is translated into CMD_NOTICE in sendcmdto_channel_butone()
++                "@%H :+ %s", chptr, parv[parc - 1]);
+     }
+     else
+       send_reply(sptr, ERR_CANNOTSENDTOCHAN, parv[1]);
+diff --git a/ircd/parse.c b/ircd/parse.c
+index dd56879..b2db247 100644
+--- a/ircd/parse.c
++++ b/ircd/parse.c
+@@ -624,7 +624,6 @@ struct Message msgtab[] = {
+     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
+     { m_unregistered, m_sethost, ms_sethost, m_sethost, m_ignore }
+   },
+-#if WE_HAVE_A_REAL_CAPABILITY_NOW
+   {
+     MSG_CAP,
+     TOK_CAP,
+@@ -632,7 +631,6 @@ struct Message msgtab[] = {
+     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
+     { m_cap, m_cap, m_ignore, m_cap, m_ignore }
+   },
+-#endif
+ 
+   /*
+    * - ASUKA ---------------------------------------------------------------------
+@@ -663,6 +661,13 @@ struct Message msgtab[] = {
+     /* UNREG, CLIENT, SERVER, OPER, SERVICE */
+     { m_quit, m_ignore, m_ignore, m_ignore, m_ignore }
+   },
++  {
++    MSG_AUTHENTICATE,
++    TOK_AUTHENTICATE,
++    0, MAXPARA, 0, 0, NULL,
++    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
++    { m_sasl, m_ignore, m_ignore, m_ignore, m_ignore }
++  }, 
+   { 0 }
+ };
+ 
+diff --git a/ircd/s_auth.c b/ircd/s_auth.c
+index bfd58c0..5bfd362 100644
+--- a/ircd/s_auth.c
++++ b/ircd/s_auth.c
+@@ -1114,6 +1114,63 @@ int auth_cap_done(struct AuthRequest *auth)
+   return check_auth_finished(auth);
+ }
+ 
++/** Accept a client in IAuth and assign them to an account.
++ * @param[in] iauth Active IAuth session.
++ * @param[in] cli Client referenced by command.
++ * @param[in] parc Number of parameters.
++ * @param[in] params Account name and optional class name for client.
++ * @return Non-zero if \a cli authorization should be checked for completion.
++ */
++static int iauth_cmd_sasl(struct IAuth *iauth, struct Client *cli,
++				  int parc, char **params)
++{
++  assert(cli_auth(cli) != NULL);
++  /* Sanity check. */
++  if (EmptyString(params[0])) {
++    return 0;
++  }
++  char *cmd = params[0];
++	if(!ircd_strcmp(cmd, "Q")) {
++		sendcmdto_one(&me, CMD_AUTHENTICATE, cli, params[1]); 
++	} else if(!ircd_strcmp(cmd, "O")) {
++		send_reply(cli, ERR_SASLABORTED);
++	} else if(!ircd_strcmp(cmd, "S")) {
++		if (EmptyString(params[3]) || EmptyString(params[4])) {
++			return 0;
++		}		
++		char *nick = params[1];
++		char *account = params[2]; 
++		char *created = params[3];
++		char *id = params[4];     
++		ircd_strncpy(cli_user(cli)->account, account, ACCOUNTLEN);
++	    cli_user(cli)->acc_id = atoi(id);
++	    cli_user(cli)->acc_create = atoi(created);
++		SetAccount(cli);
++		send_reply(cli, RPL_LOGGEDIN, cli, cli_name(cli), account);
++		send_reply(cli, RPL_SASLSUCCESS);
++	} else if(!ircd_strcmp(cmd, "N")) {
++		send_reply(cli, ERR_NICKLOCKED); 
++		send_reply(cli, ERR_SASLFAIL);
++	} else if(!ircd_strcmp(cmd, "A")) {
++		send_reply(cli, ERR_SASLALREADY);
++		send_reply(cli, ERR_SASLFAIL); 
++	} else if(!ircd_strcmp(cmd, "F")) {
++		send_reply(cli, ERR_SASLFAIL);	
++	}
++  return 0;
++}
++
++/** Handle SASL
++*/
++int auth_set_sasl(struct AuthRequest *auth, const char *crypt)
++{
++  assert(auth != NULL);
++  if(CapHas(cli_active(auth->client), CAP_SASL)) {
++	 sendto_iauth(auth->client, "Y %s", crypt);
++  }
++  return 0;
++}
++
+ /** Attempt to spawn the process for an IAuth instance.
+  * @param[in] iauth IAuth descriptor.
+  * @param[in] automatic If non-zero, apply sanity checks against
+@@ -1940,6 +1997,7 @@ static void iauth_parse(struct IAuth *iauth, char *message)
+   case 'A': handler = iauth_cmd_config; has_cli = 0; break;
+   case 's': handler = iauth_cmd_newstats; has_cli = 0; break;
+   case 'S': handler = iauth_cmd_stats; has_cli = 0; break;
++  case 'Y': handler = iauth_cmd_sasl; has_cli = 1; break;
+   case 'o': handler = iauth_cmd_username_forced; has_cli = 1; break;
+   case 'U': handler = iauth_cmd_username_good; has_cli = 1; break;
+   case 'u': handler = iauth_cmd_username_bad; has_cli = 1; break;
+diff --git a/ircd/s_err.c b/ircd/s_err.c
+index 9ea3f41..6fff813 100644
+--- a/ircd/s_err.c
++++ b/ircd/s_err.c
+@@ -1230,6 +1230,806 @@ static Numeric replyTable[] = {
+ /* 598 */
+   { 0 },
+ /* 599 */
++  { 0 },
++/* 600 */
++  { 0 },
++/* 601 */
++  { 0 },
++/* 602 */
++  { 0 },
++/* 603 */
++  { 0 },
++/* 604 */
++  { 0 },
++/* 605 */
++  { 0 },
++/* 606 */
++  { 0 },
++/* 607 */
++  { 0 },
++/* 608 */
++  { 0 },
++/* 609 */
++  { 0 },
++/* 610 */
++  { 0 },
++/* 611 */
++  { 0 },
++/* 612 */
++  { 0 },
++/* 613 */
++  { 0 },
++/* 614 */
++  { 0 },
++/* 615 */
++  { 0 },
++/* 616 */
++  { 0 },
++/* 617 */
++  { 0 },
++/* 618 */
++  { 0 },
++/* 619 */
++  { 0 },
++/* 620 */
++  { 0 },
++/* 621 */
++  { 0 },
++/* 622 */
++  { 0 },
++/* 623 */
++  { 0 },
++/* 624 */
++  { 0 },
++/* 625 */
++  { 0 },
++/* 626 */
++  { 0 },
++/* 627 */
++  { 0 },
++/* 628 */
++  { 0 },
++/* 629 */
++  { 0 },
++/* 630 */
++  { 0 },
++/* 631 */
++  { 0 },
++/* 632 */
++  { 0 },
++/* 633 */
++  { 0 },
++/* 634 */
++  { 0 },
++/* 635 */
++  { 0 },
++/* 636 */
++  { 0 },
++/* 637 */
++  { 0 },
++/* 638 */
++  { 0 },
++/* 639 */
++  { 0 },
++/* 640 */
++  { 0 },
++/* 641 */
++  { 0 },
++/* 642 */
++  { 0 },
++/* 643 */
++  { 0 },
++/* 644 */
++  { 0 },
++/* 645 */
++  { 0 },
++/* 646 */
++  { 0 },
++/* 647 */
++  { 0 },
++/* 648 */
++  { 0 },
++/* 649 */
++  { 0 },
++/* 650 */
++  { 0 },
++/* 651 */
++  { 0 },
++/* 652 */
++  { 0 },
++/* 653 */
++  { 0 },
++/* 654 */
++  { 0 },
++/* 655 */
++  { 0 },
++/* 656 */
++  { 0 },
++/* 657 */
++  { 0 },
++/* 658 */
++  { 0 },
++/* 659 */
++  { 0 },
++/* 660 */
++  { 0 },
++/* 667 */
++  { 0 },
++/* 668 */
++  { 0 },
++/* 669 */
++  { 0 },
++/* 664 */
++  { 0 },
++/* 665 */
++  { 0 },
++/* 666 */
++  { 0 },
++/* 667 */
++  { 0 },
++/* 668 */
++  { 0 },
++/* 669 */
++  { 0 },
++/* 670 */
++  { 0 },
++/* 671 */
++  { 0 },
++/* 672 */
++  { 0 },
++/* 673 */
++  { 0 },
++/* 674 */
++  { 0 },
++/* 675 */
++  { 0 },
++/* 676 */
++  { 0 },
++/* 677 */
++  { 0 },
++/* 678 */
++  { 0 },
++/* 679 */
++  { 0 },
++/* 680 */
++  { 0 },
++/* 681 */
++  { 0 },
++/* 682 */
++  { 0 },
++/* 683 */
++  { 0 },
++/* 684 */
++  { 0 },
++/* 685 */
++  { 0 },
++/* 686 */
++  { 0 },
++/* 687 */
++  { 0 },
++/* 688 */
++  { 0 },
++/* 689 */
++  { 0 },
++/* 690 */
++  { 0 },
++/* 691 */
++  { 0 },
++/* 692 */
++  { 0 },
++/* 693 */
++  { 0 },
++/* 694 */
++  { 0 },
++/* 695 */
++  { 0 },
++/* 696 */
++  { 0 },
++/* 697 */
++  { 0 },
++/* 698 */
++  { 0 },
++/* 699 */
++  { 0 },
++/* 700 */
++  { 0 },
++/* 701 */
++  { 0 },
++/* 702 */
++  { 0 },
++/* 703 */
++  { 0 },
++/* 704 */
++  { 0 },
++/* 705 */
++  { 0 },
++/* 707 */
++  { 0 },
++/* 707 */
++  { 0 },
++/* 708 */
++  { 0 },
++/* 709 */
++  { 0 },
++/* 710 */
++  { 0 },
++/* 711 */
++  { 0 },
++/* 712 */
++  { 0 },
++/* 713 */
++  { 0 },
++/* 714 */
++  { 0 },
++/* 715 */
++  { 0 },
++/* 717 */
++  { 0 },
++/* 717 */
++  { 0 },
++/* 718 */
++  { 0 },
++/* 719 */
++  { 0 },
++/* 720 */
++  { 0 },
++/* 721 */
++  { 0 },
++/* 722 */
++  { 0 },
++/* 723 */
++  { 0 },
++/* 724 */
++  { 0 },
++/* 725 */
++  { 0 },
++/* 727 */
++  { 0 },
++/* 727 */
++  { 0 },
++/* 728 */
++  { 0 },
++/* 729 */
++  { 0 },
++/* 730 */
++  { 0 },
++/* 731 */
++  { 0 },
++/* 732 */
++  { 0 },
++/* 733 */
++  { 0 },
++/* 734 */
++  { 0 },
++/* 735 */
++  { 0 },
++/* 737 */
++  { 0 },
++/* 737 */
++  { 0 },
++/* 738 */
++  { 0 },
++/* 739 */
++  { 0 },
++/* 740 */
++  { 0 },
++/* 741 */
++  { 0 },
++/* 742 */
++  { 0 },
++/* 743 */
++  { 0 },
++/* 744 */
++  { 0 },
++/* 745 */
++  { 0 },
++/* 747 */
++  { 0 },
++/* 747 */
++  { 0 },
++/* 748 */
++  { 0 },
++/* 749 */
++  { 0 },
++/* 750 */
++  { 0 },
++/* 751 */
++  { 0 },
++/* 752 */
++  { 0 },
++/* 753 */
++  { 0 },
++/* 754 */
++  { 0 },
++/* 755 */
++  { 0 },
++/* 757 */
++  { 0 },
++/* 757 */
++  { 0 },
++/* 758 */
++  { 0 },
++/* 759 */
++  { 0 },
++/* 770 */
++  { 0 },
++/* 777 */
++  { 0 },
++/* 778 */
++  { 0 },
++/* 779 */
++  { 0 },
++/* 774 */
++  { 0 },
++/* 775 */
++  { 0 },
++/* 777 */
++  { 0 },
++/* 777 */
++  { 0 },
++/* 778 */
++  { 0 },
++/* 779 */
++  { 0 },
++/* 770 */
++  { 0 },
++/* 771 */
++  { 0 },
++/* 772 */
++  { 0 },
++/* 773 */
++  { 0 },
++/* 774 */
++  { 0 },
++/* 775 */
++  { 0 },
++/* 777 */
++  { 0 },
++/* 777 */
++  { 0 },
++/* 778 */
++  { 0 },
++/* 779 */
++  { 0 },
++/* 780 */
++  { 0 },
++/* 781 */
++  { 0 },
++/* 782 */
++  { 0 },
++/* 783 */
++  { 0 },
++/* 784 */
++  { 0 },
++/* 785 */
++  { 0 },
++/* 787 */
++  { 0 },
++/* 787 */
++  { 0 },
++/* 788 */
++  { 0 },
++/* 789 */
++  { 0 },
++/* 790 */
++  { 0 },
++/* 791 */
++  { 0 },
++/* 792 */
++  { 0 },
++/* 793 */
++  { 0 },
++/* 794 */
++  { 0 },
++/* 795 */
++  { 0 },
++/* 797 */
++  { 0 },
++/* 797 */
++  { 0 },
++/* 798 */
++  { 0 },
++/* 799 */
++  { 0 },
++/* 800 */
++  { 0 },
++/* 801 */
++  { 0 },
++/* 802 */
++  { 0 },
++/* 803 */
++  { 0 },
++/* 804 */
++  { 0 },
++/* 805 */
++  { 0 },
++/* 808 */
++  { 0 },
++/* 807 */
++  { 0 },
++/* 808 */
++  { 0 },
++/* 809 */
++  { 0 },
++/* 810 */
++  { 0 },
++/* 811 */
++  { 0 },
++/* 812 */
++  { 0 },
++/* 813 */
++  { 0 },
++/* 814 */
++  { 0 },
++/* 815 */
++  { 0 },
++/* 818 */
++  { 0 },
++/* 817 */
++  { 0 },
++/* 818 */
++  { 0 },
++/* 819 */
++  { 0 },
++/* 820 */
++  { 0 },
++/* 821 */
++  { 0 },
++/* 822 */
++  { 0 },
++/* 823 */
++  { 0 },
++/* 824 */
++  { 0 },
++/* 825 */
++  { 0 },
++/* 828 */
++  { 0 },
++/* 827 */
++  { 0 },
++/* 828 */
++  { 0 },
++/* 829 */
++  { 0 },
++/* 830 */
++  { 0 },
++/* 831 */
++  { 0 },
++/* 832 */
++  { 0 },
++/* 833 */
++  { 0 },
++/* 834 */
++  { 0 },
++/* 835 */
++  { 0 },
++/* 838 */
++  { 0 },
++/* 837 */
++  { 0 },
++/* 838 */
++  { 0 },
++/* 839 */
++  { 0 },
++/* 840 */
++  { 0 },
++/* 841 */
++  { 0 },
++/* 842 */
++  { 0 },
++/* 843 */
++  { 0 },
++/* 844 */
++  { 0 },
++/* 845 */
++  { 0 },
++/* 848 */
++  { 0 },
++/* 847 */
++  { 0 },
++/* 848 */
++  { 0 },
++/* 849 */
++  { 0 },
++/* 850 */
++  { 0 },
++/* 851 */
++  { 0 },
++/* 852 */
++  { 0 },
++/* 853 */
++  { 0 },
++/* 854 */
++  { 0 },
++/* 855 */
++  { 0 },
++/* 858 */
++  { 0 },
++/* 857 */
++  { 0 },
++/* 858 */
++  { 0 },
++/* 859 */
++  { 0 },
++/* 880 */
++  { 0 },
++/* 887 */
++  { 0 },
++/* 888 */
++  { 0 },
++/* 889 */
++  { 0 },
++/* 884 */
++  { 0 },
++/* 885 */
++  { 0 },
++/* 888 */
++  { 0 },
++/* 887 */
++  { 0 },
++/* 888 */
++  { 0 },
++/* 889 */
++  { 0 },
++/* 870 */
++  { 0 },
++/* 871 */
++  { 0 },
++/* 872 */
++  { 0 },
++/* 873 */
++  { 0 },
++/* 874 */
++  { 0 },
++/* 875 */
++  { 0 },
++/* 878 */
++  { 0 },
++/* 877 */
++  { 0 },
++/* 878 */
++  { 0 },
++/* 879 */
++  { 0 },
++/* 880 */
++  { 0 },
++/* 881 */
++  { 0 },
++/* 882 */
++  { 0 },
++/* 883 */
++  { 0 },
++/* 884 */
++  { 0 },
++/* 885 */
++  { 0 },
++/* 888 */
++  { 0 },
++/* 887 */
++  { 0 },
++/* 888 */
++  { 0 },
++/* 889 */
++  { 0 },
++/* 890 */
++  { 0 },
++/* 891 */
++  { 0 },
++/* 892 */
++  { 0 },
++/* 893 */
++  { 0 },
++/* 894 */
++  { 0 },
++/* 895 */
++  { 0 },
++/* 898 */
++  { 0 },
++/* 897 */
++  { 0 },
++/* 898 */
++  { 0 },
++/* 899 */
++  { 0 },
++/* 900 */
++  { RPL_LOGGEDIN, "%C %s :You are now logged in as %s", "900" },
++/* 901 */
++  { RPL_LOGGEDOUT, "%C :You are now logged out", "901" },
++/* 902 */
++  { ERR_NICKLOCKED, ":You must use a nick assigned to you", "902" },
++/* 903 */
++  { RPL_SASLSUCCESS, ":SASL authentication successful", "903" },
++/* 904 */
++  { ERR_SASLFAIL, ":SASL authentication failed", "904" },
++/* 905 */
++  { ERR_SASLTOOLONG, ":SASL message too long", "905" },
++/* 909 */
++  { ERR_SASLABORTED, ":SASL authentication aborted", "906" },
++/* 907 */
++  { ERR_SASLALREADY, ":You have already authenticated using SASL", "907" },
++/* 908 */
++  { RPL_SASLMECHS, "%s :are available SASL mechanisms", "908" },
++/* 909 */
++  { 0 },
++/* 910 */
++  { 0 },
++/* 911 */
++  { 0 },
++/* 912 */
++  { 0 },
++/* 913 */
++  { 0 },
++/* 914 */
++  { 0 },
++/* 915 */
++  { 0 },
++/* 919 */
++  { 0 },
++/* 917 */
++  { 0 },
++/* 918 */
++  { 0 },
++/* 919 */
++  { 0 },
++/* 920 */
++  { 0 },
++/* 921 */
++  { 0 },
++/* 922 */
++  { 0 },
++/* 923 */
++  { 0 },
++/* 924 */
++  { 0 },
++/* 925 */
++  { 0 },
++/* 929 */
++  { 0 },
++/* 927 */
++  { 0 },
++/* 928 */
++  { 0 },
++/* 929 */
++  { 0 },
++/* 930 */
++  { 0 },
++/* 931 */
++  { 0 },
++/* 932 */
++  { 0 },
++/* 933 */
++  { 0 },
++/* 934 */
++  { 0 },
++/* 935 */
++  { 0 },
++/* 939 */
++  { 0 },
++/* 937 */
++  { 0 },
++/* 938 */
++  { 0 },
++/* 939 */
++  { 0 },
++/* 940 */
++  { 0 },
++/* 941 */
++  { 0 },
++/* 942 */
++  { 0 },
++/* 943 */
++  { 0 },
++/* 944 */
++  { 0 },
++/* 945 */
++  { 0 },
++/* 949 */
++  { 0 },
++/* 947 */
++  { 0 },
++/* 948 */
++  { 0 },
++/* 949 */
++  { 0 },
++/* 950 */
++  { 0 },
++/* 951 */
++  { 0 },
++/* 952 */
++  { 0 },
++/* 953 */
++  { 0 },
++/* 954 */
++  { 0 },
++/* 955 */
++  { 0 },
++/* 959 */
++  { 0 },
++/* 957 */
++  { 0 },
++/* 958 */
++  { 0 },
++/* 959 */
++  { 0 },
++/* 990 */
++  { 0 },
++/* 997 */
++  { 0 },
++/* 998 */
++  { 0 },
++/* 999 */
++  { 0 },
++/* 994 */
++  { 0 },
++/* 995 */
++  { 0 },
++/* 999 */
++  { 0 },
++/* 997 */
++  { 0 },
++/* 998 */
++  { 0 },
++/* 999 */
++  { 0 },
++/* 970 */
++  { 0 },
++/* 971 */
++  { 0 },
++/* 972 */
++  { 0 },
++/* 973 */
++  { 0 },
++/* 974 */
++  { 0 },
++/* 975 */
++  { 0 },
++/* 979 */
++  { 0 },
++/* 977 */
++  { 0 },
++/* 978 */
++  { 0 },
++/* 979 */
++  { 0 },
++/* 980 */
++  { 0 },
++/* 981 */
++  { 0 },
++/* 982 */
++  { 0 },
++/* 983 */
++  { 0 },
++/* 984 */
++  { 0 },
++/* 985 */
++  { 0 },
++/* 989 */
++  { 0 },
++/* 987 */
++  { 0 },
++/* 988 */
++  { 0 },
++/* 989 */
++  { 0 },
++/* 990 */
++  { 0 },
++/* 991 */
++  { 0 },
++/* 992 */
++  { 0 },
++/* 993 */
++  { 0 },
++/* 994 */
++  { 0 },
++/* 995 */
++  { 0 },
++/* 999 */
++  { 0 },
++/* 997 */
++  { 0 },
++/* 998 */
++  { 0 },
++/* 999 */
+   { 0 }
+ };
+ 
+diff --git a/ircd/s_user.c b/ircd/s_user.c
+index 7f28f0c..3828128 100644
+--- a/ircd/s_user.c
++++ b/ircd/s_user.c
+@@ -974,12 +974,15 @@ hide_hostmask(struct Client *cptr, unsigned int flag)
+   if (!HasFlag(cptr, FLAG_HIDDENHOST) || !HasFlag(cptr, FLAG_ACCOUNT) || HasSetHost(cptr))
+     return 0;
+ 
+-  sendcmdto_common_channels_butone(cptr, CMD_QUIT, cptr, ":Registered");
++
++  sendcmdto_capflag_common_channels_butone(cptr, CMD_QUIT, cptr, 0, CAP_CHGHOST, ":Registered");
++  sendcmdto_capflag_common_channels_butone(cptr, CMD_CHGHOST, NULL, CAP_CHGHOST, 0, "%s %s.%s",
++    cli_user(cptr)->username, cli_user(cptr)->account, feature_str(FEAT_HIDDEN_HOST));
+   ircd_snprintf(0, cli_user(cptr)->host, HOSTLEN, "%s.%s",
+                 cli_user(cptr)->account, feature_str(FEAT_HIDDEN_HOST));
+ 
+   /* ok, the client is now fully hidden, so let them know -- hikari */
+-  if (MyConnect(cptr))
++  if (MyConnect(cptr) && !CapHas(cli_active(cptr), CAP_CHGHOST))
+    send_reply(cptr, RPL_HOSTHIDDEN, cli_user(cptr)->host);
+ 
+   /*
+@@ -992,15 +995,19 @@ hide_hostmask(struct Client *cptr, unsigned int flag)
+       continue;
+     /* Send a JOIN unless the user's join has been delayed. */
+     if (!IsDelayedJoin(chan))
+-      sendcmdto_channel_butserv_butone(cptr, CMD_JOIN, chan->channel, cptr, 0,
+-                                         "%H", chan->channel);
++    {
++      sendjointo_channel_butserv(cptr, chan->channel, 0, CAP_CHGHOST);
++      if (cli_user(cptr)->away)
++        sendcmdto_capflag_channel_butserv_butone(cptr, CMD_AWAY, chan->channel,
++          NULL, 0, CAP_AWAYNOTIFY, CAP_CHGHOST, ":%s", cli_user(cptr)->away);
++    }
+     if (IsChanOp(chan) && HasVoice(chan))
+-      sendcmdto_channel_butserv_butone(&his, CMD_MODE, chan->channel, cptr, 0,
+-                                       "%H +ov %C %C", chan->channel, cptr,
++      sendcmdto_capflag_channel_butserv_butone(&his, CMD_MODE, chan->channel, cptr, 0,
++                                       0, CAP_CHGHOST, "%H +ov %C %C", chan->channel, cptr,
+                                        cptr);
+     else if (IsChanOp(chan) || HasVoice(chan))
+-      sendcmdto_channel_butserv_butone(&his, CMD_MODE, chan->channel, cptr, 0,
+-        "%H +%c %C", chan->channel, IsChanOp(chan) ? 'o' : 'v', cptr);
++      sendcmdto_capflag_channel_butserv_butone(&his, CMD_MODE, chan->channel, cptr, 0,
++        0, CAP_CHGHOST, "%H +%c %C", chan->channel, IsChanOp(chan) ? 'o' : 'v', cptr);
+   }
+   return 0;
+ }
+@@ -1162,8 +1169,10 @@ int set_hostmask(struct Client *cptr, char *hostmask, char *password)
+   for (chan = cli_user(cptr)->channel; chan; chan = chan->next_channel) {
+     if (IsZombie(chan))
+       continue;
+-    sendcmdto_channel_butserv_butone(cptr, CMD_JOIN, chan->channel, cptr,
+-      "%H", chan->channel);
++      sendjointo_channel_butserv(cptr, chan->channel, 0, CAP_CHGHOST);
++      if (cli_user(cptr)->away)
++        sendcmdto_capflag_channel_butserv_butone(cptr, CMD_AWAY, chan->channel,
++          NULL, 0, CAP_AWAYNOTIFY, CAP_CHGHOST, ":%s", cli_user(cptr)->away);
+     if (IsChanOp(chan) && HasVoice(chan)) {
+       sendcmdto_channel_butserv_butone(&me, CMD_MODE, chan->channel, cptr,
+         "%H +ov %C %C", chan->channel, cptr, cptr);
+@@ -2028,3 +2037,12 @@ send_supported(struct Client *cptr)
+ 
+   return 0; /* convenience return, if it's ever needed */
+ }
++
++/**
++ * Registers SASL
++ */
++int
++register_sasl(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
++{
++	auth_set_sasl(cli_auth(sptr), parv[1]);
++}
+\ No newline at end of file
+diff --git a/ircd/send.c b/ircd/send.c
+index 829b2c7..04ceffd 100644
+--- a/ircd/send.c
++++ b/ircd/send.c
+@@ -915,3 +915,149 @@ void vsendto_opmask_butone(struct Client *one, unsigned int mask,
+ 
+   msgq_clean(mb);
+ }
++
++/** Send a (prefixed) command to all channels that \a from is on
++ * matching or not matching a capability flag.
++ * @param[in] from Client originating the command.
++ * @param[in] cmd Long name of command.
++ * @param[in] tok Short name of command.
++ * @param[in] one Client direction to skip (or NULL).
++ * @param[in] require Only send to clients with this Flag bit set.
++ * @param[in] forbid Do not send to clients with this Flag bit set.
++ * @param[in] pattern Format string for command arguments.
++ */
++void sendcmdto_capflag_common_channels_butone(struct Client *from, const char *cmd,
++					      const char *tok, struct Client *one,
++					      capset_t require, capset_t forbid, const char *pattern, ...)
++{
++  struct VarData vd;
++  struct MsgBuf *mb;
++  struct Membership *chan;
++  struct Membership *member;
++
++  assert(0 != from);
++  assert(0 != cli_from(from));
++  assert(0 != pattern);
++  assert(!IsServer(from) && !IsMe(from));
++
++  vd.vd_format = pattern; /* set up the struct VarData for %v */
++
++  va_start(vd.vd_args, pattern);
++
++  /* build the buffer */
++  mb = msgq_make(0, "%:#C %s %v", from, cmd, &vd);
++  va_end(vd.vd_args);
++
++  bump_sentalong(from);
++  /*
++   * loop through from's channels, and the members on their channels
++   */
++  for (chan = cli_user(from)->channel; chan; chan = chan->next_channel) {
++    if (IsZombie(chan) || IsDelayedJoin(chan))
++      continue;
++
++    for (member = chan->channel->members; member;
++	 member = member->next_member)
++    {
++      if (MyConnect(member->user)
++          && -1 < cli_fd(cli_from(member->user))
++          && member->user != one
++          && cli_sentalong(member->user) != sentalong_marker
++          && (require == 0 || CapHas(cli_active(member->user), require))
++          && (forbid == 0 || !CapHas(cli_active(member->user), forbid)))
++      {
++          cli_sentalong(member->user) = sentalong_marker;
++          send_buffer(member->user, mb, 0);
++      }
++    }
++  }
++
++  if (MyConnect(from)
++      && from != one
++      && (require == 0 || CapHas(cli_active(from), require))
++      && (forbid == 0 || !CapHas(cli_active(from), forbid)))
++    send_buffer(from, mb, 0);
++
++  msgq_clean(mb);
++}
++
++/** Send a (prefixed) command to all local users on a channel matching or not matching a capability flag..
++ * @param[in] from Client originating the command.
++ * @param[in] cmd Long name of command.
++ * @param[in] tok Short name of command (ignored).
++ * @param[in] to Destination channel.
++ * @param[in] one Client direction to skip (or NULL).
++ * @param[in] skip Bitmask of SKIP_DEAF, SKIP_NONOPS, SKIP_NONVOICES indicating which clients to skip.
++ * @param[in] require Only send to clients with this Flag bit set.
++ * @param[in] forbid Do not send to clients with this Flag bit set.
++ * @param[in] pattern Format string for command arguments.
++ */
++void sendcmdto_capflag_channel_butserv_butone(struct Client *from, const char *cmd,
++					      const char *tok, struct Channel *to,
++					      struct Client *one, unsigned int skip,
++					      capset_t require, capset_t forbid,
++					      const char *pattern, ...)
++{
++  struct VarData vd;
++  struct MsgBuf *mb;
++  struct Membership *member;
++
++  vd.vd_format = pattern; /* set up the struct VarData for %v */
++  va_start(vd.vd_args, pattern);
++
++  /* build the buffer */
++  mb = msgq_make(0, "%:#C %s %v", from, cmd, &vd);
++  va_end(vd.vd_args);
++
++  /* send the buffer to each local channel member */
++  for (member = to->members; member; member = member->next_member) {
++    if (!MyConnect(member->user)
++        || member->user == one
++        || IsZombie(member)
++        || (skip & SKIP_DEAF && IsDeaf(member->user))
++        || (skip & SKIP_NONOPS && !IsChanOp(member))
++        || (skip & SKIP_NONVOICES && !IsChanOp(member) && !HasVoice(member))
++        || (require && !CapHas(cli_active(member->user), require))
++        || (forbid && CapHas(cli_active(member->user), forbid)))
++        continue;
++
++    send_buffer(member->user, mb, 0);
++  }
++
++  msgq_clean(mb);
++}
++
++
++/* Send JOIN to all local channel users matching or not matching
++ * capability flags.
++ * @param[in] from Client joining the channel.
++ * @param[in] chptr Channel being joined.
++ * @param[in] require Capability mask to send this message for.
++ * @param[in] forbid Capability mask to block this message for.
++ */
++void sendjointo_channel_butserv(struct Client *from, struct Channel *chptr,
++				capset_t require,
++				capset_t forbid)
++{
++  sendcmdto_capflag_channel_butserv_butone(from, CMD_JOIN, chptr, NULL,
++    0, require | CAP_EXTJOIN, forbid, "%H %s :%s", chptr,
++    IsAccount(from) ? cli_user(from)->account : "*", cli_info(from));
++  sendcmdto_capflag_channel_butserv_butone(from, CMD_JOIN, chptr, NULL,
++    0, require, forbid | CAP_EXTJOIN, "%H", chptr);
++}
++
++/* Send JOIN to a single user.
++ * @param[in] from Client joining the channel.
++ * @param[in] chptr Channel being joined.
++ * @param[in] one Client to send the message to.
++ */
++void sendjointo_one(struct Client *from,
++		    struct Channel *chptr,
++		    struct Client *one)
++{
++  if (CapHas(cli_active(one), CAP_EXTJOIN))
++    sendcmdto_one(from, CMD_JOIN, one, "%H %s :%s", chptr,
++      IsAccount(from) ? cli_user(from)->account : "*", cli_info(from));
++  else
++    sendcmdto_one(from, CMD_JOIN, one, "%H", chptr);
++}
+\ No newline at end of file
