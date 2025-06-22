@@ -1,8 +1,8 @@
 diff --git a/include/capab.h b/include/capab.h
-index 1303b0f..b030fe6 100644
+index 1303b0f..2beb1c4 100644
 --- a/include/capab.h
 +++ b/include/capab.h
-@@ -27,26 +27,42 @@
+@@ -27,26 +27,43 @@
  #include "client.h"
  #endif
  
@@ -26,7 +26,8 @@ index 1303b0f..b030fe6 100644
 +	_CAP(ECHOMESSAGE, FEAT_CAP_ECHOMESSAGE, 0, "echo-message"), \
 +	_CAP(EXTJOIN, FEAT_CAP_EXTJOIN, 0, "extended-join"), \
 +	_CAP(INVITENOTIFY, FEAT_CAP_INVITENOTIFY, 0, "invite-notify"), \
-+	_CAP(SASL, FEAT_CAP_SASL, 0, "sasl")
++	_CAP(SASL, FEAT_CAP_SASL, 0, "sasl"), \
++	_CAP(MESSAGETAGS, FEAT_CAP_MESSAGETAGS, 0, "message-tags")
  
 -/** Client capabilities */
 +/** Client capabilities, counting by index. */
@@ -94,10 +95,10 @@ index 4da341e..c7d2896 100644
  #define con_auth(con)		((con)->con_auth)
  
 diff --git a/include/handlers.h b/include/handlers.h
-index a468201..d6c0fb9 100644
+index a468201..2e5ad3c 100644
 --- a/include/handlers.h
 +++ b/include/handlers.h
-@@ -137,6 +137,7 @@ extern int m_proto(struct Client*, struct Client*, int, char*[]);
+@@ -137,9 +137,14 @@ extern int m_proto(struct Client*, struct Client*, int, char*[]);
  extern int m_pseudo(struct Client*, struct Client*, int, char*[]);
  extern int m_quit(struct Client*, struct Client*, int, char*[]);
  extern int m_registered(struct Client*, struct Client*, int, char*[]);
@@ -105,11 +106,49 @@ index a468201..d6c0fb9 100644
  extern int m_sethost(struct Client*, struct Client*, int, char*[]);
  extern int m_silence(struct Client*, struct Client*, int, char*[]);
  extern int m_stats(struct Client*, struct Client*, int, char*[]);
++extern int m_tagmsg(struct Client*, struct Client*, int, char*[]);
++extern int m_tagmsg_typing(struct Client*, struct Client*, int, char*[]);
++extern int m_tagmsg_done(struct Client*, struct Client*, int, char*[]);
++extern int m_tagmsg_paused(struct Client*, struct Client*, int, char*[]);
+ extern int m_time(struct Client*, struct Client*, int, char*[]);
+ extern int m_topic(struct Client*, struct Client*, int, char*[]);
+ extern int m_trace(struct Client*, struct Client*, int, char*[]);
+@@ -231,6 +236,7 @@ extern int ms_settime(struct Client*, struct Client*, int, char*[]);
+ extern int ms_silence(struct Client*, struct Client*, int, char*[]);
+ extern int ms_squit(struct Client*, struct Client*, int, char*[]);
+ extern int ms_stats(struct Client*, struct Client*, int, char*[]);
++extern int ms_tagmsg(struct Client*, struct Client*, int, char*[]);
+ extern int ms_topic(struct Client*, struct Client*, int, char*[]);
+ extern int ms_trace(struct Client*, struct Client*, int, char*[]);
+ extern int ms_uping(struct Client*, struct Client*, int, char*[]);
+diff --git a/include/ircd_chattr.h b/include/ircd_chattr.h
+index 1e7f6ba..4597170 100644
+--- a/include/ircd_chattr.h
++++ b/include/ircd_chattr.h
+@@ -59,6 +59,9 @@
+ #define NTL_KTIME  0x20000  /**< Valid character for a k:line time   */
+ #define NTL_CHPFX  0x40000  /**< channel prefix char # & +           */
+ #define NTL_IRCIP6 0x80000  /**< Numeric IPv6 character (hex or colon) */
++#define NTL_CMD   0x100000  /**< Commands */
++#define NTL_CMD_LOWER   0x200000  /**< Commands lower */
++#define NTL_CMD_UPPER   0x400000  /**< Commands upper */
+ 
+ /*
+  * Tables used for translation and classification macros
+@@ -125,6 +128,7 @@ extern const unsigned int  IRCD_CharAttrTab[];
+ #define IsEol(c)           (IRCD_CharAttrTab[(c) - CHAR_MIN] & NTL_EOL)
+ /** Test whether a character is valid in a K: line expiration string. */
+ #define IsKTimeChar(c)     (IRCD_CharAttrTab[(c) - CHAR_MIN] & NTL_KTIME)
+-
++/** Test whether a character is an command string. */
++#define IsCommand(c)       (IRCD_CharAttrTab[(c) - CHAR_MIN] & NTL_CMD)
+ 
+ #endif /* INCLUDED_ircd_chattr_h */
 diff --git a/include/ircd_features.h b/include/ircd_features.h
-index 9118f7c..f2fb73b 100644
+index 9118f7c..302f89a 100644
 --- a/include/ircd_features.h
 +++ b/include/ircd_features.h
-@@ -107,6 +107,15 @@ enum Feature {
+@@ -107,6 +107,16 @@ enum Feature {
    FEAT_SETHOST,
    FEAT_SETHOST_USER,
    FEAT_SETHOST_AUTO,
@@ -122,14 +161,15 @@ index 9118f7c..f2fb73b 100644
 +  FEAT_CAP_EXTJOIN,
 +  FEAT_CAP_INVITENOTIFY,
 +  FEAT_CAP_SASL,
++  FEAT_CAP_MESSAGETAGS,
  
    /* HEAD_IN_SAND Features */
    FEAT_HIS_SNOTICES,
 diff --git a/include/msg.h b/include/msg.h
-index f0ebe3c..8805ed4 100644
+index f0ebe3c..cd0a600 100644
 --- a/include/msg.h
 +++ b/include/msg.h
-@@ -367,6 +367,14 @@ struct Client;
+@@ -367,6 +367,44 @@ struct Client;
  #define TOK_CAP			"CAP"
  #define CMD_CAP			MSG_CAP, TOK_CAP
  
@@ -140,6 +180,36 @@ index f0ebe3c..8805ed4 100644
 +#define MSG_CHGHOST	"CHGHOST"
 +#define TOK_CHGHOST	"CHGHOST"
 +#define CMD_CHGHOST	MSG_CHGHOST, TOK_CHGHOST
++
++#define MSG_TAGMSG	"TAGMSG"
++#define TOK_TAGMSG	"TAGMSG"
++#define CMD_TAGMSG	MSG_TAGMSG, TOK_TAGMSG
++
++#define MSG_TAGMSG_TYPING	"@+TYPING=ACTIVE"
++#define TOK_TAGMSG_TYPING	"@+TYPING=ACTIVE"
++#define CMD_TAGMSG_TYPING	MSG_TAGMSG_TYPING, TOK_TAGMSG_TYPING
++
++#define MSG_TAGMSG_PAUSED	"@+TYPING=PAUSED"
++#define TOK_TAGMSG_PAUSED	"@+TYPING=PAUSED"
++#define CMD_TAGMSG_PAUSED	MSG_TAGMSG_PAUSED, TOK_TAGMSG_PAUSED
++
++
++#define MSG_TAGMSG_DONE	"@+TYPING=DONE"
++#define TOK_TAGMSG_DONE	"@+TYPING=DONE"
++#define CMD_TAGMSG_DONE	MSG_TAGMSG_DONE, TOK_TAGMSG_DONE
++
++#define MSG_TAGMSG_DRAFT_TYPING	"@+DRAFT/TYPING=ACTIVE"
++#define TOK_TAGMSG_DRAFT_TYPING	"@+DRAFT/TYPING=ACTIVE"
++#define CMD_TAGMSG_DRAFT_TYPING	MSG_TAGMSG_DRAFT/TYPING, TOK_TAGMSG_DRAFT/TYPING
++
++#define MSG_TAGMSG_DRAFT_PAUSED	"@+DRAFT/TYPING=PAUSED"
++#define TOK_TAGMSG_DRAFT_PAUSED	"@+DRAFT/TYPING=PAUSED"
++#define CMD_TAGMSG_DRAFT_PAUSED	MSG_TAGMSG_PAUSED, TOK_TAGMSG_PAUSED
++
++
++#define MSG_TAGMSG_DRAFT_DONE	"@+DRAFT/TYPING=DONE"
++#define TOK_TAGMSG_DRAFT_DONE	"@+DRAFT/TYPING=DONE"
++#define CMD_TAGMSG_DRAFT_DONE	MSG_TAGMSG_DONE, TOK_TAGMSG_DONE
 +
  /*
   * Constants
@@ -191,7 +261,7 @@ index 901a1b0..a03d5b5 100644
  
  #endif /* INCLUDED_s_user_h */
 diff --git a/include/send.h b/include/send.h
-index 209bc6c..3e1cd7e 100644
+index 209bc6c..f91daef 100644
 --- a/include/send.h
 +++ b/include/send.h
 @@ -13,6 +13,10 @@
@@ -205,7 +275,7 @@ index 209bc6c..3e1cd7e 100644
  struct Channel;
  struct Client;
  struct DBuf;
-@@ -127,4 +131,30 @@ extern void sendto_opmask_butone_ratelimited(struct Client *one,
+@@ -127,4 +131,38 @@ extern void sendto_opmask_butone_ratelimited(struct Client *one,
  extern void vsendto_opmask_butone(struct Client *one, unsigned int mask,
  				  const char *pattern, va_list vl);
  
@@ -224,6 +294,14 @@ index 209bc6c..3e1cd7e 100644
 +					      struct Client *one, unsigned int skip,
 +					      capset_t require, capset_t forbid,
 +					      const char *pattern, ...);
++
++/* Send tagmsg to all users matching or not matching a capability flag */
++void sendcmdto_capflag_tagmsg_butone(struct Client *from, struct Channel *to,
++					      struct Client *one, const char *pattern, ...);
++
++/* Send tagmsg to all users matching or not matching a capability flag */
++void sendcmdto_capflag_tagmsg_priv_butone(struct Client *from, struct Client *to,
++					      struct Client *one, const char *pattern, ...);
 +						  
 +/* Send JOIN to all local channel users matching or not matching capability flags */
 +extern void sendjointo_channel_butserv(struct Client *from,
@@ -234,10 +312,10 @@ index 209bc6c..3e1cd7e 100644
 +/* Send JOIN to a single user */
 +extern void sendjointo_one(struct Client *from,
 +			   struct Channel *chptr,
-+			   struct Client *one);						  
++			   struct Client *one);
  #endif /* INCLUDED_send_h */
 diff --git a/ircd/Makefile.in b/ircd/Makefile.in
-index 01a5ea6..b076c72 100644
+index 01a5ea6..b0724e4 100644
 --- a/ircd/Makefile.in
 +++ b/ircd/Makefile.in
 @@ -166,6 +166,7 @@ IRCD_SRC = \
@@ -248,6 +326,29 @@ index 01a5ea6..b076c72 100644
  	m_server.c \
  	m_set.c \
  	m_sethost.c \
+@@ -173,6 +174,7 @@ IRCD_SRC = \
+ 	m_silence.c \
+ 	m_squit.c \
+ 	m_stats.c \
++	m_tagmsg.c \
+ 	m_time.c \
+ 	m_topic.c \
+ 	m_trace.c \
+@@ -1069,6 +1071,14 @@ m_stats.o: m_stats.c ../config.h ../include/client.h \
+   ../include/ircd_chattr.h ../include/msg.h ../include/numeric.h \
+   ../include/s_stats.h ../include/s_user.h ../include/send.h \
+   ../include/struct.h
++m_tagmsg.o: m_tagmsg.c ../config.h ../include/client.h ../include/ircd_defs.h \
++ ../include/dbuf.h ../include/msgq.h ../include/ircd_events.h \
++ ../include/ircd_handler.h ../include/res.h ../include/capab.h \
++ ../include/ircd.h ../include/struct.h ../include/ircd_features.h \
++ ../include/ircd_log.h ../include/ircd_reply.h ../include/ircd_string.h \
++ ../include/ircd_chattr.h ../include/msg.h ../include/numeric.h \
++ ../include/numnicks.h ../include/s_misc.h ../include/s_user.h \
++ ../include/send.h
+ m_time.o: m_time.c ../config.h ../include/client.h ../include/ircd_defs.h \
+   ../include/dbuf.h ../include/msgq.h ../include/ircd_events.h \
+   ../config.h ../include/ircd_handler.h ../include/res.h \
 diff --git a/ircd/channel.c b/ircd/channel.c
 index fdb3c25..23a237d 100644
 --- a/ircd/channel.c
@@ -287,10 +388,10 @@ index fdb3c25..23a237d 100644
  }
  
 diff --git a/ircd/ircd_features.c b/ircd/ircd_features.c
-index ffb14a5..fe7515b 100644
+index ffb14a5..75b8a46 100644
 --- a/ircd/ircd_features.c
 +++ b/ircd/ircd_features.c
-@@ -361,6 +361,15 @@ static struct FeatureDesc {
+@@ -361,6 +361,16 @@ static struct FeatureDesc {
    F_B(SETHOST_USER, 0, 0, 0),
    F_B(SETHOST_AUTO, 0, 0, 0),
  
@@ -302,6 +403,7 @@ index ffb14a5..fe7515b 100644
 +  F_B(CAP_EXTJOIN, 0, 1, 0),
 +  F_B(CAP_INVITENOTIFY, 0, 1, 0),
 +  F_B(CAP_SASL, 0, 1, 0), 
++  F_B(CAP_MESSAGETAGS, 0, 1, 0),
 +
    /* HEAD_IN_SAND Features */
    F_B(HIS_SNOTICES, 0, 1, 0),
@@ -876,6 +978,220 @@ index 0000000..d917d2f
 +  return 0;
 +}
 \ No newline at end of file
+diff --git a/ircd/m_tagmsg.c b/ircd/m_tagmsg.c
+new file mode 100644
+index 0000000..fe89c36
+--- /dev/null
++++ b/ircd/m_tagmsg.c
+@@ -0,0 +1,208 @@
++/*
++ * IRC - Internet Relay Chat, ircd/m_tagmsg.c
++ * Copyright (C) 1990 Jarkko Oikarinen and
++ *                    University of Oulu, Computing Center
++ *
++ * See file AUTHORS in IRC package for additional names of
++ * the programmers.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 1, or (at your option)
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ *
++ * $Id$
++ */
++
++/*
++ * m_functions execute protocol messages on this server:
++ *
++ *    cptr    is always NON-sptr, pointing to a *LOCAL* client
++ *            structure (with an open socket connected!). This
++ *            identifies the physical socket where the message
++ *            originated (or which caused the m_function to be
++ *            executed--some m_functions may call others...).
++ *
++ *    sptr    is the source of the message, defined by the
++ *            prefix part of the message if present. If not
++ *            or prefix not found, then sptr==cptr.
++ *
++ *            (!IsServer(cptr)) => (cptr == sptr), because
++ *            prefixes are taken *only* from servers...
++ *
++ *            (IsServer(cptr))
++ *                    (sptr == cptr) => the message didn't
++ *                    have the prefix.
++ *
++ *                    (sptr != cptr && IsServer(sptr) means
++ *                    the prefix specified servername. (?)
++ *
++ *                    (sptr != cptr && !IsServer(sptr) means
++ *                    that message originated from a remote
++ *                    user (not local).
++ *
++ *            combining
++ *
++ *            (!IsServer(sptr)) means that, sptr can safely
++ *            taken as defining the target structure of the
++ *            message in this server.
++ *
++ *    *Always* true (if 'parse' and others are working correct):
++ *
++ *    1)      sptr->from == cptr  (note: cptr->from == cptr)
++ *
++ *    2)      MyConnect(sptr) <=> sptr == cptr (e.g. sptr
++ *            *cannot* be a local connection, unless it's
++ *            actually cptr!). [MyConnect(x) should probably
++ *            be defined as (x == x->from) --msa ]
++ *
++ *    parc    number of variable parameter strings (if zero,
++ *            parv is allowed to be NULL)
++ *
++ *    parv    a NULL terminated list of parameter pointers,
++ *
++ *                    parv[0], sender (prefix string), if not present
++ *                            this points to an empty string.
++ *                    parv[1]...parv[parc-1]
++ *                            pointers to additional parameters
++ *                    parv[parc] == sptr, *always*
++ *
++ *            note:   it is guaranteed that parv[0]..parv[parc-1] are all
++ *                    non-NULL pointers.
++ */
++#include "config.h"
++
++#include "capab.h"
++#include "channel.h"
++#include "client.h"
++#include "gline.h"
++#include "hash.h"
++#include "ircd.h"
++#include "ircd_chattr.h"
++#include "ircd_features.h"
++#include "ircd_log.h"
++#include "ircd_reply.h"
++#include "ircd_string.h"
++#include "msg.h"
++#include "numeric.h"
++#include "numnicks.h"
++#include "s_debug.h"
++#include "s_user.h"
++#include "send.h"
++#include "sys.h"
++
++/* #include <assert.h> -- Now using assert in ircd_log.h */
++#include <stdio.h>
++#include <string.h>
++
++/*
++ * m_tagmsg - typing message handler
++ */
++int m_tagmsg(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
++{
++  return 0;
++}
++
++/*
++ * m_tagmsg - typing message handler
++ */
++int m_tagmsg_typing(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
++{
++  if (parc < 3)
++    return need_more_params(sptr, "TAGMSG");
++  if(feature_bool(FEAT_CAP_MESSAGETAGS)) {
++	struct Channel *chan = FindChannel(parv[2]);
++	struct Client *user = FindUser(parv[2]);
++	if(chan) {
++		sendcmdto_capflag_tagmsg_butone(sptr, chan,
++			  sptr, "@+draft/typing=active");
++		sendcmdto_capflag_tagmsg_butone(sptr, chan,
++			  sptr, "@+typing=active");	
++    }
++	if (user) {
++		sendcmdto_capflag_tagmsg_priv_butone(sptr, user,
++			  sptr, "@+draft/typing=active");
++		sendcmdto_capflag_tagmsg_priv_butone(sptr, user,
++			  sptr, "@+typing=active");	
++    }		
++  }
++  return 0;
++}
++
++/*
++ * m_tagmsg - typing message handler
++ */
++int m_tagmsg_paused(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
++{
++  if (parc < 3)
++    return need_more_params(sptr, "TAGMSG");
++  if(feature_bool(FEAT_CAP_MESSAGETAGS)) {
++	struct Channel *chan = FindChannel(parv[2]);
++	struct Client *user = FindUser(parv[2]);
++	if(chan) {
++		sendcmdto_capflag_tagmsg_butone(sptr, chan,
++			  sptr, "@+draft/typing=paused");
++		sendcmdto_capflag_tagmsg_butone(sptr, chan,
++			  sptr, "@+typing=paused");	
++    } 
++	if (user) {
++		sendcmdto_capflag_tagmsg_priv_butone(sptr, user,
++			  sptr, "@+draft/typing=paused");
++		sendcmdto_capflag_tagmsg_priv_butone(sptr, user,
++			  sptr, "@+typing=paused");	
++    }		
++  }
++}
++
++/*
++ * m_tagmsg - typing message handler
++ */
++int m_tagmsg_done(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
++{
++  if (parc < 3)
++    return need_more_params(sptr, "TAGMSG");
++  if(feature_bool(FEAT_CAP_MESSAGETAGS)) {
++	struct Channel *chan = FindChannel(parv[2]);
++	struct Client *user = FindUser(parv[2]);
++	if(chan) {
++		sendcmdto_capflag_tagmsg_butone(sptr, chan,
++			  sptr, "@+draft/typing=done");
++		sendcmdto_capflag_tagmsg_butone(sptr, chan,
++			  sptr, "@+typing=done");	
++    } 
++	if (user) {
++		sendcmdto_capflag_tagmsg_priv_butone(sptr, user,
++			  sptr, "@+draft/typing=done");
++		sendcmdto_capflag_tagmsg_priv_butone(sptr, user,
++			  sptr, "@+typing=done");	
++    }		
++  }
++  return 0;
++}
++
++/*
++ * m_tagmsg - typing message handler
++ */
++int ms_tagmsg(struct Client* cptr, struct Client* sptr, int parc, char* parv[])
++{
++  if (parc < 3)
++    return need_more_params(sptr, "TAGMSG");
++  if(feature_bool(FEAT_CAP_MESSAGETAGS)) {
++	struct Channel *chan = FindChannel(parv[2]);
++	struct Client *user = FindUser(parv[2]);
++	if(chan) 	
++		sendcmdto_capflag_tagmsg_butone(FindUser(parv[0]), chan, FindUser(parv[0]), parv[1]);
++	if(user)
++		sendcmdto_capflag_tagmsg_priv_butone(FindUser(parv[0]), user, FindUser(parv[0]), parv[1]);
++  }
++  return 0;
++}
 diff --git a/ircd/m_wallchops.c b/ircd/m_wallchops.c
 index db114ba..e7b485d 100644
 --- a/ircd/m_wallchops.c
@@ -905,7 +1221,7 @@ index 292b1f2..3ae4be0 100644
      else
        send_reply(sptr, ERR_CANNOTSENDTOCHAN, parv[1]);
 diff --git a/ircd/parse.c b/ircd/parse.c
-index dd56879..b2db247 100644
+index dd56879..6ad21f7 100644
 --- a/ircd/parse.c
 +++ b/ircd/parse.c
 @@ -624,7 +624,6 @@ struct Message msgtab[] = {
@@ -916,15 +1232,65 @@ index dd56879..b2db247 100644
    {
      MSG_CAP,
      TOK_CAP,
-@@ -632,7 +631,6 @@ struct Message msgtab[] = {
+@@ -632,8 +631,55 @@ struct Message msgtab[] = {
      /* UNREG, CLIENT, SERVER, OPER, SERVICE */
      { m_cap, m_cap, m_ignore, m_cap, m_ignore }
    },
 -#endif
- 
+-
++{
++    MSG_TAGMSG,
++    TOK_TAGMSG,
++    0, MAXPARA, MFLG_SLOW, 0, NULL,
++    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
++    { m_tagmsg, m_tagmsg, ms_tagmsg, m_tagmsg, m_ignore }
++  },
++  {
++    MSG_TAGMSG_TYPING,
++    TOK_TAGMSG_TYPING,
++    0, MAXPARA, MFLG_SLOW, 0, NULL,
++    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
++    { m_tagmsg_typing, m_tagmsg_typing, ms_tagmsg, m_tagmsg_typing, m_ignore }
++  },
++  {
++    MSG_TAGMSG_PAUSED,
++    TOK_TAGMSG_PAUSED,
++    0, MAXPARA, MFLG_SLOW, 0, NULL,
++    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
++    { m_tagmsg_paused, m_tagmsg_paused, ms_tagmsg, m_tagmsg_paused, m_ignore }
++  },
++  {
++    MSG_TAGMSG_DONE,
++    TOK_TAGMSG_DONE,
++    0, MAXPARA, MFLG_SLOW, 0, NULL,
++    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
++    { m_tagmsg_done, m_tagmsg_done, ms_tagmsg, m_tagmsg_done, m_ignore }
++  },  
++  {
++    MSG_TAGMSG_DRAFT_TYPING,
++    TOK_TAGMSG_DRAFT_TYPING,
++    0, MAXPARA, MFLG_SLOW, 0, NULL,
++    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
++    { m_tagmsg_typing, m_tagmsg_typing, ms_tagmsg, m_tagmsg_typing, m_ignore }
++  },
++  {
++    MSG_TAGMSG_DRAFT_PAUSED,
++    TOK_TAGMSG_DRAFT_PAUSED,
++    0, MAXPARA, MFLG_SLOW, 0, NULL,
++    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
++    { m_tagmsg_paused, m_tagmsg_paused, ms_tagmsg, m_tagmsg_paused, m_ignore }
++  },
++  {
++    MSG_TAGMSG_DRAFT_DONE,
++    TOK_TAGMSG_DRAFT_DONE,
++    0, MAXPARA, MFLG_SLOW, 0, NULL,
++    /* UNREG, CLIENT, SERVER, OPER, SERVICE */
++    { m_tagmsg_done, m_tagmsg_done, ms_tagmsg, m_tagmsg_done, m_ignore }
++  },  
    /*
     * - ASUKA ---------------------------------------------------------------------
-@@ -663,6 +661,13 @@ struct Message msgtab[] = {
+    * Add the command for CHECK.
+@@ -663,6 +709,13 @@ struct Message msgtab[] = {
      /* UNREG, CLIENT, SERVER, OPER, SERVICE */
      { m_quit, m_ignore, m_ignore, m_ignore, m_ignore }
    },
@@ -938,6 +1304,15 @@ index dd56879..b2db247 100644
    { 0 }
  };
  
+@@ -755,7 +808,7 @@ msg_tree_parse(char *cmd, struct MessageTree *root)
+   for (mtree = root; mtree; mtree = mtree->pointers[(*cmd++) & (MAXPTRLEN-1)]) {
+       if (*cmd == '\0' && mtree->msg)
+           return mtree->msg;
+-      else if (!IsAlpha(*cmd))
++      else if (!IsCommand(*cmd))
+           return NULL;
+   }
+   return NULL;
 diff --git a/ircd/s_auth.c b/ircd/s_auth.c
 index bfd58c0..5bfd362 100644
 --- a/ircd/s_auth.c
@@ -1901,10 +2276,10 @@ index 7f28f0c..3828128 100644
 +}
 \ No newline at end of file
 diff --git a/ircd/send.c b/ircd/send.c
-index 829b2c7..04ceffd 100644
+index 829b2c7..1d01dd5 100644
 --- a/ircd/send.c
 +++ b/ircd/send.c
-@@ -915,3 +915,149 @@ void vsendto_opmask_butone(struct Client *one, unsigned int mask,
+@@ -915,3 +915,222 @@ void vsendto_opmask_butone(struct Client *one, unsigned int mask,
  
    msgq_clean(mb);
  }
@@ -1974,6 +2349,81 @@ index 829b2c7..04ceffd 100644
 +  msgq_clean(mb);
 +}
 +
++/** Send tagmsg to all users matching or not matching a capability flag..
++ * @param[in] from Client originating the command.
++ * @param[in] to Destination channel.
++ * @param[in] one Client direction to skip (or NULL).
++ * @param[in] pattern Format string for command arguments.
++ */
++void sendcmdto_capflag_tagmsg_butone(struct Client *from, struct Channel *to,
++					      struct Client *one, const char *pattern, ...)
++{
++  struct Membership *member;
++  struct VarData vd;
++  struct MsgBuf *user_mb;
++  struct MsgBuf *serv_mb;
++
++  vd.vd_format = pattern;
++
++  /* Build buffer to send to users */
++  va_start(vd.vd_args, pattern);
++  user_mb = msgq_make(0, "%v %:#C TAGMSG %H", &vd, from, to);
++  va_end(vd.vd_args);
++
++  /* Build buffer to send to servers */
++  va_start(vd.vd_args, pattern);
++  serv_mb = msgq_make(&me, "%:#C TAGMSG %v %H", from, &vd, to);
++  va_end(vd.vd_args);
++
++  /* send buffer along! */
++  bump_sentalong(one);
++  if(to) {
++	  for (member = to->members; member; member = member->next_member) {
++		/* skip one, zombies, and deaf users... */
++		if (IsZombie(member) ||
++			cli_fd(cli_from(member->user)) < 0 ||
++			cli_sentalong(member->user) == sentalong_marker)
++		  continue;
++		cli_sentalong(member->user) = sentalong_marker;
++
++		if (MyConnect(member->user)) {/* pick right buffer to send */
++		  if (CapHas(cli_active(member->user), CAP_MESSAGETAGS))
++			send_buffer(member->user, user_mb, 0);
++		} else
++		  send_buffer(member->user, serv_mb, 0);
++	  }
++  }
++  msgq_clean(user_mb);
++  msgq_clean(serv_mb);
++
++}
++
++/** Send tagmsg to all users matching or not matching a capability flag..
++ * @param[in] from Client originating the command.
++ * @param[in] to Destination channel.
++ * @param[in] one Client direction to skip (or NULL).
++ * @param[in] pattern Format string for command arguments.
++ */
++void sendcmdto_capflag_tagmsg_priv_butone(struct Client *from, struct Client *to,
++					      struct Client *one, const char *pattern, ...)
++{
++  /* Build buffer to send to users */
++  struct VarData vd;
++  vd.vd_format = pattern;
++  if(MyConnect(to)) {
++    if (CapHas(cli_active(to), CAP_MESSAGETAGS)) {
++      va_start(vd.vd_args, pattern);
++	  sendrawto_one(to, "%v %:#C TAGMSG %s", &vd, from, cli_name(to));
++	  va_end(vd.vd_args);
++	}
++  } else {
++
++	va_start(vd.vd_args, pattern);
++	sendcmdto_serv_butone(from, CMD_TAGMSG, NULL, "%v %s", &vd, cli_name(to));
++	va_end(vd.vd_args);
++  }
++}
++
 +/** Send a (prefixed) command to all local users on a channel matching or not matching a capability flag..
 + * @param[in] from Client originating the command.
 + * @param[in] cmd Long name of command.
@@ -1994,7 +2444,6 @@ index 829b2c7..04ceffd 100644
 +  struct VarData vd;
 +  struct MsgBuf *mb;
 +  struct Membership *member;
-+
 +  vd.vd_format = pattern; /* set up the struct VarData for %v */
 +  va_start(vd.vd_args, pattern);
 +
@@ -2019,7 +2468,6 @@ index 829b2c7..04ceffd 100644
 +
 +  msgq_clean(mb);
 +}
-+
 +
 +/* Send JOIN to all local channel users matching or not matching
 + * capability flags.
@@ -2055,3 +2503,28 @@ index 829b2c7..04ceffd 100644
 +    sendcmdto_one(from, CMD_JOIN, one, "%H", chptr);
 +}
 \ No newline at end of file
+diff --git a/ircd/table_gen.c b/ircd/table_gen.c
+index 6fe5cd5..c51122d 100644
+--- a/ircd/table_gen.c
++++ b/ircd/table_gen.c
+@@ -79,6 +79,12 @@ static void makeTables(void)
+   markRange(NTL_UPPER, 'A', 'Z');
+   markString(NTL_UPPER, "[\\]^");
+ 
++  markRange(NTL_CMD_LOWER, 'a', 'z');
++  markString(NTL_CMD_LOWER, "{|}~@+=/");
++
++  markRange(NTL_CMD_UPPER, 'A', 'Z');
++  markString(NTL_CMD_UPPER, "[\\]^@+=/");
++  
+   markRange(NTL_DIGIT, '0', '9');
+ 
+   markRange(NTL_CNTRL, '\000', '\037');
+@@ -92,6 +98,7 @@ static void makeTables(void)
+    * the results of the previous ones ! */
+ 
+   moveMacro(NTL_LOWER | NTL_UPPER, NTL_ALPHA);
++  moveMacro(NTL_CMD_LOWER | NTL_CMD_UPPER, NTL_CMD);
+   moveMacro(NTL_ALPHA | NTL_DIGIT, NTL_ALNUM);
+   moveMacro(NTL_ALNUM | NTL_PUNCT, NTL_GRAPH);
+ 
