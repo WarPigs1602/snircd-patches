@@ -1,3 +1,18 @@
+diff --git a/configure b/configure
+index e074b31..d803b41 100755
+--- a/configure
++++ b/configure
+@@ -10733,6 +10733,10 @@ if test x"$unet_maxcon" = xunlimited; then
+     unet_maxcon=`ulimit -Sn`
+ fi
+ unet_maxcon=`expr $unet_maxcon - 4`
++NN_MAX_CLIENT_P=262168
++if test "$unet_maxcon" -gt $NN_MAX_CLIENT_P ; then
++    unet_maxcon=$NN_MAX_CLIENT_P
++fi
+ echo "$as_me:$LINENO: checking max connections" >&5
+ echo $ECHO_N "checking max connections... $ECHO_C" >&6
+ 
 diff --git a/include/capab.h b/include/capab.h
 index 1303b0f..2beb1c4 100644
 --- a/include/capab.h
